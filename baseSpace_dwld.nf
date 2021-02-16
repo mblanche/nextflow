@@ -110,10 +110,23 @@ process bwa_mem {
 	<(zcat $R1_files|head -n 100000) \
 	<(zcat $R2_files|head -n 100000) \
 	| samtools  view -@ \$(nproc) -Shb - \
-	| samtools sort -m 2G -T ${tmpDir} -@ \$(nproc) - 
-	> ${id}.bam
+	| samtools sort -m 2G -T ${tmpDir} -@ \$(nproc) -o ${id}.bam - 
     """
 }
 
-sam_ch.view()
+process index_bam {
+    container 'mblanche/bwa-samtools'
+
+    input:
+    path bam from sam_ch
+    
+    output:
+    path bam into sam_ch2
+
+    """
+    samtools index -@ \$(nproc) ${bam}
+    """
+}
+
+sam_ch2.view()
 
