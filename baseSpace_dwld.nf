@@ -68,15 +68,17 @@ Channel
     .flatten()
     .set { biosample_ch }
 
+//.fromPath("/mnt/ebs/genome/nextflow/${params.genome}", checkIfExists: true)
 Channel
     .fromPath("/mnt/ebs/genome/nextflow/${params.genome}", checkIfExists: true)
     .ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
     .view()
     .set { bwa_index }
 
-Channel
-    .fromPath( './tmp', type: 'dir' )
-    .set { tmpDir_ch}
+// Channel
+//     .fromPath( './tmp', type: 'dir' )
+//     .set { tmpDir_ch}
+
 
 process findFile {
     container 'mblanche/basespace-cli'
@@ -155,7 +157,7 @@ process bwa_mem {
     set id, file(R1_files) from R1_groups_ch
     set id2, file(R2_files) from R2_groups_ch
     file index from bwa_index.first()
-    path tmpDir from tmpDir_ch.first()
+    // path tmpDir from tmpDir_ch.first()
     
     output:
     path "*.bam" into sam_ch
@@ -167,7 +169,7 @@ process bwa_mem {
 	<(zcat $R1_files|head -n 100000) \
 	<(zcat $R2_files|head -n 100000) \
 	| samtools  view -@ \$(nproc) -Shb - \
-	| samtools sort -m 2G -T ${tmpDir} -@ \$(nproc) -o ${id}.bam - 
+	| samtools sort -m 2G  -@ \$(nproc) -o ${id}.bam - 
     """
 }
 
