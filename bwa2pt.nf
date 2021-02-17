@@ -39,8 +39,8 @@ process bwa_mem {
     """
     bwa mem -5SP -t ${task.cpus} \
 	${index}/${params.genome} \
-	<(zcat ${R1s}|head -n 100000) \
-	<(zcat ${R2s}|head -n 100000) \
+	<(zcat ${R1s}| head -n 10000) \
+	<(zcat ${R2s}| head -n 10000) \
 	>${id}.sam
     """
 }
@@ -79,7 +79,7 @@ process pairtools_parse {
 	--min-mapq 40 \
 	--walks-policy 5unique \
 	--max-inter-align-gap 30 \
-	--nproc-in \$(nproc) --nproc-out \$(nproc) \
+	--nproc-in ${task.cpus} --nproc-out ${task.cpus} \
 	--chroms-path ${chr_sizes} \
 	${sam} \
 	> ${id}.pairsam
@@ -100,7 +100,7 @@ process pairtools_sort {
     script:
     id = sam.name.toString().take(sam.name.toString().lastIndexOf('.'))
     """
-    pairtools sort --nproc \$(nproc) $sam >${id}_sorted.pairsam
+    pairtools sort --nproc ${task.cpus} $sam >${id}_sorted.pairsam
     """
 }
 
@@ -124,7 +124,7 @@ process pairtools_dedup {
     script:
     id = sam.name.toString().tokenize('_').get(0)
     """
-    pairtools dedup --nproc-in \$(nproc) --nproc-out \$(nproc) \
+    pairtools dedup --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
 	--mark-dups \
 	--output-stats ${id}_pairtools.stats  \
 	--output ${id}_dedup.pairsam \
@@ -312,12 +312,12 @@ process juicer {
 }
 
 workflow.onComplete {
-    
-    def mainDir = file('$PWD/work')
-    println "done!"
+    // will probably have to do something else with S3 work dir
+    println "Working directory is " + workDir
     if (params.cleanup) {
-	println "Deleting directory " + mainDir.name
-	mainDir.deleteDir()
+	println "Deleting directory " + workDir
+	workDir.deleteDir()
     }
 }
+
 
