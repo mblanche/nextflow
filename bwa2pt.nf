@@ -39,8 +39,8 @@ process bwa_mem {
     """
     bwa mem -5SP -t ${task.cpus} \
 	${index}/${params.genome} \
-	<(zcat ${R1s}| head -n 10000) \
-	<(zcat ${R2s}| head -n 10000) \
+	<(zcat ${R1s}) \
+	<(zcat ${R2s}) \
 	>${id}.sam
     """
 }
