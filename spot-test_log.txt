@@ -1,0 +1,4 @@
+N E X T F L O W  ~  version 20.10.0
+Launching `bwa2pt.nf` [pedantic_lavoisier] - revision: 9375b7972d
+[82/644b24] Submitted process > bwa_mem (1)
+[d3/419db4] Submitted process > bwa_mem (2)

@@ -1,0 +1,10 @@
+N E X T F L O W  ~  version 20.10.0
+Launching `bwa2pt.nf` [elegant_lamarr] - revision: 9375b7972d
+[31/5708af] Submitted process > bwa_mem (1)
+[f3/e27223] Submitted process > bwa_mem (2)
+[77/534508] Submitted process > bwa_mem (4)
+[25/01e023] Submitted process > bwa_mem (5)
+[a1/edb1a6] Submitted process > bwa_mem (7)
+[95/23852c] Submitted process > bwa_mem (6)
+[9d/ab29e1] Submitted process > bwa_mem (3)
+[43/3892be] Submitted process > bwa_mem (8)
