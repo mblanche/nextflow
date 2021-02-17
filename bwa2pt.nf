@@ -293,13 +293,13 @@ process juicer {
     path chr_sizes from chrSizes_juicer
     
     output:
-    path "*.cool" into juicer_out_ch
+    path "*.hic" into juicer_out_ch
     
     script:
     id = pairs.name.toString().tokenize('.').get(0)
     """
     java -Xmx16000m -Djava.awt.headless=true \
-	-jar juicer_tools_1.22.01.jar pre \
+	-jar /juicer_tools_1.22.01.jar pre \
 	--threads ${task.cpus} \
 	-j ${task.cpus} \
 	-k VC,VC_SQRT,KR,SCALE \
