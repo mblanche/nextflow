@@ -142,6 +142,7 @@ process pairtools_split_dedup {
     	mode: 'copy',
     	saveAs: {filename ->
     	if (filename.endsWith('.valid.pairs.gz')) "coolerFiles/${id}/$filename"
+	else if (filename.endsWith('.valid.pairs.gz.px2')) "coolerFiles/${id}/$filename"
     }
     
     input:
@@ -309,3 +310,14 @@ process juicer {
 
     """
 }
+
+workflow.onComplete {
+    
+    def mainDir = file('$PWD/work')
+    println "done!"
+    if (params.cleanup) {
+	println "Deleting directory " + mainDir.name
+	mainDir.deleteDir()
+    }
+}
+
