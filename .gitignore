@@ -5,6 +5,7 @@
 
 log.*
 *.log
+*_log.*
 
 # NextFlow
 .nextflow*
