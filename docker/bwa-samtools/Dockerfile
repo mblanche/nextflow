@@ -10,6 +10,7 @@ RUN apt update \
     samtools \
     git \
     zlib1g-dev \
+    build-essential \
     -y --no-install-recommends \
     && git clone https://github.com/lh3/bwa.git \
     && cd /bwa \
