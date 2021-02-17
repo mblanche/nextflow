@@ -56,7 +56,8 @@ process make_chr_size {
 	chrSizes_cooler, chrSizes_juicer
     
     """
-    awk -v OFS='\t' '/^@SQ/{split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' ${sam} > chr_size.tsv
+    samtools view -H ${sam} | \
+	awk -v OFS='\t' '/^@SQ/{split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' > chr_size.tsv
     """
 }
 
