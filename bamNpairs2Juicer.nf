@@ -2,7 +2,6 @@
 
 params.expDir = 'capture'
 params.expName = 'tmp'
-params.genome = 'hg38'
 
 Channel
     .fromPath("/mnt/ebs/ref_push/${params.expDir}/${params.expName}/bam/*.bam")
@@ -15,16 +14,13 @@ Channel
 
 bam_ch
     .join(pairs_ch)
-    .view()
     .into {ch1;ch2}
 
 process make_chr_size {
     container 'mblanche/bwa-samtools'
 
-    
     input:
     tuple val(id), path(bam), path(pairs), path(idx) from ch1
-
 
     output:
     path 'chr_size.tsv' into chrSizes_ch
@@ -56,7 +52,7 @@ process juicer {
     
     script:
     """
-    java -Xmx16000m -Djava.awt.headless=true \
+    java -Xmx16000m  -Djava.awt.headless=true \
 	-jar /juicer_tools_1.22.01.jar pre \
 	--threads ${task.cpus} \
 	-j ${task.cpus} \
@@ -66,5 +62,4 @@ process juicer {
 	${chr_sizes}
     """
 }
-
 

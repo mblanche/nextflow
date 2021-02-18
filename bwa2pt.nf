@@ -1,5 +1,4 @@
 #!/usr/bin/env nextflow
-
 /*
 * TODO: Update this for the current script
 */
@@ -39,21 +38,23 @@ process bwa_mem {
     """
     bwa mem -5SP -t ${task.cpus} \
 	${index}/${params.genome} \
-	<(zcat ${R1s}) \
-	<(zcat ${R2s}) \
+	<(zcat ${R1s}|head -n 40000) \
+	<(zcat ${R2s}|head -n 40000) \
 	>${id}.sam
     """
 }
 
 process make_chr_size {
-    container 'mblanche/awscli'
+    echo true
+    
+    container 'mblanche/bwa-samtools'
 
     input:
     path sam from sam4chrSize
 
     output:
     path 'chr_size.tsv' into chrSizes_pt,
-	chrSizes_cooler, chrSizes_juicer
+    	chrSizes_cooler, chrSizes_juicer
     
     """
     samtools view -H ${sam} | \
@@ -176,7 +177,8 @@ process bam_sort {
     path bam from samtools_bam_ch
     
     output:
-    path "*.bam" into bam_forindex_ch
+    path "${id}.bam" into bam_bw_ch
+    path "${id}.bam.bai" into idx_bw_ch
     
     script:
     id = bam.name.toString().replaceFirst(/_PT.bam/,'')
@@ -185,26 +187,8 @@ process bam_sort {
 	-@ ${task.cus} \
 	-o ${id}.bam \
 	${bam}
-    """
-}
 
-process bam_index {
-    cpus 48
-    memory '150 GB'
-    container 'mblanche/bwa-samtools'
-    
-    publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/bam", mode: 'copy'
-    
-    input:
-    path bam from bam_forindex_ch
-    
-    output:
-    path "*.bai" into bam_samtools_index_ch
-    
-    script:
-    id = bam.name.toString().tokenize('.').get(0)
-    """
-    samtools index -@${task.cpus} ${bam}
+    samtools index -@${task.cpus} ${id}.bam
     """
 }
 
@@ -308,7 +292,27 @@ process juicer {
 	${pairs} \
 	${id}.hic \
 	${chr_sizes}
+    """
+}
 
+
+process deeptools_bw {
+    echo true
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/deeptools'
+    
+    publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/bigwigs",
+    	mode: 'copy'
+    
+    input:
+    path bam from bam_bw_ch
+    path idx from idx_bw_ch
+    
+    script:
+    id = bam.name.toString().replaceFirst(/.bam/,'')
+    """
+    bamCoverage -p ${task.cpus} -bs 1 -b ${bam} -o ${id}.bw
     """
 }
 
