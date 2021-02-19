@@ -1,8 +1,8 @@
 #!/usr/bin/env nextflow
 
-params.expDir = 'capture'
+params.expDir = 'prodEpi'
 params.expName = 'tmp'
-
+params.noJuicer = false
 Channel
     .fromPath("/home/ubuntu/ebs/ref_push/${params.expDir}/${params.expName}/bam/*.bam")
     .map { file -> tuple(file.name.toString().replaceFirst(/.bam/,''),file) }
@@ -31,8 +31,6 @@ process make_chr_size {
     """
 }
 
-
-
 chrSizes_ch
     .join(pairs_ch)
     .set { ch2 }
@@ -40,7 +38,7 @@ chrSizes_ch
 process juicer {
     label 'bigTask'
     cpus 48
-    memory '100 GB'
+    memory "100 GB"
     container 'mblanche/juicer'
     
     publishDir "result/",
@@ -53,9 +51,19 @@ process juicer {
     path "*.hic" into juicer_out_ch
     path chr_sizes into chrSizes_ch2
 
+    when:
+    !params.noJuicer
+    
     script:
     """
-    zcat $pairs |head -n 1000 > test.hic
+    java -Xmx96000m -Djava.awt.headless=true \
+	-jar /juicer_tools_1.22.01.jar pre \
+	--threads ${task.cpus} \
+	-j ${task.cpus} \
+	-k VC,VC_SQRT,KR,SCALE \
+	${pairs} \
+	${id}.hic \
+	${chr_sizes}
     """
 }
 

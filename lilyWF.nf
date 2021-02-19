@@ -5,13 +5,17 @@
 
 
 params.expDir = 'prodEpi'
-params.expName = 'tmp'
+params.expName = 'tmp3'
 params.genome = 'hg38'
+
+params.noPairTools = false
+params.noJuicer = false
+params.noCooler = false
+params.noCoverage = false
 
 
 Channel
-    .fromFilePairs("${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/fastqs/*_R{1,2}*.fastq.gz", flat: true)
-    .map { prefix, file1, file2 -> tuple(prefix.split('_')[0], file1, file2) }
+    .fromFilePairs("${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/fastqs/*_R{1,2}*.fastq.gz",flat: true)
     .groupTuple()
     .set{fastqs_ch}
 
@@ -20,10 +24,12 @@ Channel
     .ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
     .set { bwa_index }
 
+
+
 process bwa_mem {
+    tag "bwa_mem_${id}"
     cpus 48
     memory '100 GB'
-    
     container 'mblanche/bwa-samtools'
     
     input:
@@ -31,8 +37,7 @@ process bwa_mem {
     file index from bwa_index.first()
     
     output:
-    path "${id}.sam" into sam4chrSize,
-	sam4pt
+    path "${id}.sam" into sam4chrSize, sam4pt
     
     script:
     """
@@ -45,6 +50,7 @@ process bwa_mem {
 }
 
 process make_chr_size {
+    tag "chr_size_${id}"
     label 'local'
     echo true
     
@@ -54,9 +60,13 @@ process make_chr_size {
     path sam from sam4chrSize
 
     output:
-    path 'chr_size.tsv' into chrSizes_pt,
-    	chrSizes_cooler, chrSizes_juicer
+    path 'chr_size.tsv' into chrSizes_pt, chrSizes_cooler, chrSizes_juicer
     
+    when:
+    !params.noPairTools
+
+    script:
+    id = id = sam.name.toString().take(sam.name.toString().lastIndexOf('.'))
     """
     samtools view -H ${sam} | \
 	awk -v OFS='\t' '/^@SQ/{split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' > chr_size.tsv
@@ -64,6 +74,7 @@ process make_chr_size {
 }
 
 process pairtools_parse {
+    tag "pt_parse_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -74,6 +85,9 @@ process pairtools_parse {
     
     output:
     path "*.pairsam" into pairsam_ch
+
+    when:
+    !params.noPairTools
 
     script:
     id = sam.name.toString().take(sam.name.toString().lastIndexOf('.'))
@@ -90,15 +104,19 @@ process pairtools_parse {
 }
 
 process pairtools_sort {
+    tag "pt_sort_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
 
     input:
     path sam from pairsam_ch
-    
+
     output:
     path "*_sorted.pairsam" into sorted_ps_ch
+
+    when:
+    !params.noPairTools
 
     script:
     id = sam.name.toString().take(sam.name.toString().lastIndexOf('.'))
@@ -108,6 +126,7 @@ process pairtools_sort {
 }
 
 process pairtools_dedup {
+    tag "pt_dedup_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -118,14 +137,17 @@ process pairtools_dedup {
     
     input:
     path sam from sorted_ps_ch
-    
+
     output:
     path "*_dedup.pairsam" into dedup_ps_ch
     path "*_unmapped.pairsam" into unmapped_ps_ch
     path "*_pairtools.stats" into ps_stats
+
+    when:
+    !params.noPairTools
     
     script:
-    id = sam.name.toString().tokenize('_').get(0)
+    id = sam.name.toString().take(sam.name.toString().lastIndexOf('.'))
     """
     pairtools dedup --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
 	--mark-dups \
@@ -137,37 +159,94 @@ process pairtools_dedup {
 }
 
 process pairtools_split_dedup {
+    tag "pt_split_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
-        
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}",
-    	mode: 'copy',
-    	saveAs: {filename ->
-    	if (filename.endsWith('.valid.pairs.gz')) "coolerFiles/${id}/$filename"
-	else if (filename.endsWith('.valid.pairs.gz.px2')) "coolerFiles/${id}/$filename"
-    }
-    
+
     input:
     path sam from dedup_ps_ch
     
     output:
-    path "*.bam" into pt_bam_ch, samtools_bam_ch
-    path "*.valid.pairs.gz" into pairs_ch_cooler, pairs_ch_juicer
-    path "*.px2" into pairs_px2_cooler, pairs_px2_juicer
+    path "*.bam" into bam_parts_ch
+    path "*.valid.pairs.gz" into pairs_parts_ch
 
+    when:
+    !params.noPairTools
+    
     script:
-    id = sam.name.toString().tokenize('_').get(0)
+    id = sam.name.toString().take(sam.name.toString().lastIndexOf('.'))
     """
     pairtools split --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
 	--output-sam ${id}_PT.bam  \
 	--output-pairs ${id}.valid.pairs.gz  \
 	${sam}
+    """
+}
+
+process merge_pairs {
+    tag "pt_merge_${id}"
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/pairtools'
+
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/${id}",
+    	mode: 'copy'
+    
+    input:
+    tuple val(key), path(pairs) from pairs_parts_ch
+    	.map { file ->
+	    def key = file.name.toString().tokenize('_').get(0)
+            return tuple(key, file)
+	}
+	.groupTuple()
+
+    output:
+    path "*.valid.pairs.gz" into pairs_ch_cooler, pairs_ch_juicer
+    path "*.px2" into pairs_px2_cooler, pairs_px2_juicer
+
+    when:
+    !params.noPairTools
+    
+    script:
+    id = key.tokenize('_').get(0)
+    """
+    pairtools merge -o ${id}.valid.pairs.gz --nproc ${task.cpus}  ${pairs}
     pairix ${id}.valid.pairs.gz
     """
 }
 
+
+process merge_bam {
+    tag "bam_merge_${id}"
+    echo true
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/bwa-samtools'
+    
+    input:
+    tuple val(key), path(bam_part) from bam_parts_ch
+	.map { file ->
+	    def key = file.name.toString().tokenize('_').get(0)
+            return tuple(key, file)
+	}
+	.groupTuple()
+
+    when:
+    !params.noPairTools
+
+    output:
+    path "*.bam" into merged_bam_sort_ch
+
+    script:
+    id = key.tokenize('_').get(0)
+    """
+    samtools merge -@ ${task.cpus} ${id}.bam $bam_part 
+    """
+}
+
 process bam_sort {
+    tag "bam_sort_${id}"
     cpus 48
     memory '150 GB'
     container 'mblanche/bwa-samtools'
@@ -175,7 +254,7 @@ process bam_sort {
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bam", mode: 'copy'
     
     input:
-    path bam from samtools_bam_ch
+    path bam from merged_bam_sort_ch
     
     output:
     path "${id}.bam" into bam_bw_ch
@@ -194,6 +273,7 @@ process bam_sort {
 }
 
 process pairtools_split_unmapped {
+    tag "pt_split2_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -219,6 +299,7 @@ process pairtools_split_unmapped {
 }
 
 process cooler_cload {
+    tag "cooler_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/cooler'
@@ -233,7 +314,10 @@ process cooler_cload {
     
     output:
     path "*.cool" into cooler_ch
-    
+
+    when:
+    !params.noCooler && !params.noPairTools
+
     script:
     id = pairs.name.toString().tokenize('.').get(0)
     """
@@ -246,6 +330,7 @@ process cooler_cload {
 }
 
 process cooler_zoomify {
+    tag "zoomify_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/cooler'
@@ -255,7 +340,10 @@ process cooler_zoomify {
     
     input:
     path cooler from cooler_ch
-    
+
+    when:
+    !params.noCooler && !params.noPairTools
+
     output:
     path "*.mcool" into mcool_ch
     
@@ -267,6 +355,7 @@ process cooler_zoomify {
 }
 
 process juicer {
+    tag "juicer_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/juicer'
@@ -281,23 +370,27 @@ process juicer {
     
     output:
     path "*.hic" into juicer_out_ch
+
+    when:
+    !params.noJuicer && !params.noPairTools
     
     script:
     id = pairs.name.toString().tokenize('.').get(0)
     """
-    java -Xmx72000m -Djava.awt.headless=true \
+    java -Xmx96000m -Djava.awt.headless=true \
 	-jar /juicer_tools_1.22.01.jar pre \
-	--threads ${task.cpus} \
-	-j ${task.cpus} \
-	-k VC,VC_SQRT,KR,SCALE \
 	${pairs} \
 	${id}.hic \
 	${chr_sizes}
+    
+    ## -j ${task.cpus} \
+    ## -k VC,VC_SQRT,KR,SCALE \
     """
 }
 
 
 process deeptools_bw {
+    tag "dt_cov_${id}"
     echo true
     cpus 48
     memory '100 GB'
@@ -309,6 +402,9 @@ process deeptools_bw {
     input:
     path bam from bam_bw_ch
     path idx from idx_bw_ch
+    
+    when:
+    !params.noCoverage && !params.noPairTools
     
     script:
     id = bam.name.toString().replaceFirst(/.bam/,'')
@@ -325,3 +421,5 @@ workflow.onComplete {
 	workDir.deleteDir()
     }
 }
+
+
