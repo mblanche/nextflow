@@ -22,3 +22,5 @@ tmp*
 tests/test_data
 *.pyc
 report*
+
+*.bam

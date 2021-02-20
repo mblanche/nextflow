@@ -1,17 +1,17 @@
 #!/usr/bin/env nextflow
 
 params.expDir = 'prodEpi'
-params.expName = 'tmp'
+params.expName = 'tmp2'
 params.noJuicer = false
+
 Channel
-    .fromPath("/home/ubuntu/ebs/ref_push/${params.expDir}/${params.expName}/bam/*.bam")
+    .fromPath("${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bam/*.bam")
     .map { file -> tuple(file.name.toString().replaceFirst(/.bam/,''),file) }
     .set{bam_ch}
 
 Channel
-    .fromFilePairs("/home/ubuntu/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/**.{valid.pairs.gz,valid.pairs.gz.px2}",flat: true)
+    .fromFilePairs("${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/**.{valid.pairs.gz,valid.pairs.gz.px2}",flat: true)
     .set { pairs_ch }
-
 
 
 process make_chr_size {
@@ -36,12 +36,13 @@ chrSizes_ch
     .set { ch2 }
 
 process juicer {
+    tag "${id}"
     label 'bigTask'
     cpus 48
     memory "100 GB"
     container 'mblanche/juicer'
     
-    publishDir "result/",
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/hicFiles",
     	mode: 'copy'
     
     input:
@@ -49,7 +50,6 @@ process juicer {
     
     output:
     path "*.hic" into juicer_out_ch
-    path chr_sizes into chrSizes_ch2
 
     when:
     !params.noJuicer
@@ -66,5 +66,3 @@ process juicer {
 	${chr_sizes}
     """
 }
-
-

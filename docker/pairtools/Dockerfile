@@ -39,8 +39,8 @@ RUN apt-get update -y\
 	&& cp bin/* /usr/local/bin/ \
 	&& cd / \
 	&& rm -rf /pairix \
-	&& apt clean \
-	&& apt purge \
+	&& apt-get clean \
+	&& apt-get purge \
 	&& rm -rf /var/lib/apt/lists/* /tmp/*
 
 

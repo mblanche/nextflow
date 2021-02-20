@@ -27,7 +27,7 @@ Channel
 
 
 process bwa_mem {
-    tag "bwa_mem_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/bwa-samtools'
@@ -50,7 +50,7 @@ process bwa_mem {
 }
 
 process make_chr_size {
-    tag "chr_size_${id}"
+    tag "_${id}"
     label 'local'
     echo true
     
@@ -74,7 +74,7 @@ process make_chr_size {
 }
 
 process pairtools_parse {
-    tag "pt_parse_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -104,7 +104,7 @@ process pairtools_parse {
 }
 
 process pairtools_sort {
-    tag "pt_sort_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -126,7 +126,7 @@ process pairtools_sort {
 }
 
 process pairtools_dedup {
-    tag "pt_dedup_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -159,7 +159,7 @@ process pairtools_dedup {
 }
 
 process pairtools_split_dedup {
-    tag "pt_split_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -185,7 +185,7 @@ process pairtools_split_dedup {
 }
 
 process merge_pairs {
-    tag "pt_merge_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -218,7 +218,7 @@ process merge_pairs {
 
 
 process merge_bam {
-    tag "bam_merge_${id}"
+    tag "_${id}"
     echo true
     cpus 48
     memory '100 GB'
@@ -241,7 +241,7 @@ process merge_bam {
     script:
     id = key.tokenize('_').get(0)
     """
-    samtools merge -@ ${task.cpus} ${id}.bam $bam_part 
+    samtools merge -@ ${task.cpus} ${id}_PT.bam ${bam_part}
     """
 }
 
@@ -273,7 +273,7 @@ process bam_sort {
 }
 
 process pairtools_split_unmapped {
-    tag "pt_split2_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/pairtools'
@@ -299,7 +299,7 @@ process pairtools_split_unmapped {
 }
 
 process cooler_cload {
-    tag "cooler_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/cooler'
@@ -330,7 +330,7 @@ process cooler_cload {
 }
 
 process cooler_zoomify {
-    tag "zoomify_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/cooler'
@@ -355,7 +355,7 @@ process cooler_zoomify {
 }
 
 process juicer {
-    tag "juicer_${id}"
+    tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/juicer'
@@ -390,7 +390,7 @@ process juicer {
 
 
 process deeptools_bw {
-    tag "dt_cov_${id}"
+    tag "_${id}"
     echo true
     cpus 48
     memory '100 GB'
@@ -402,6 +402,9 @@ process deeptools_bw {
     input:
     path bam from bam_bw_ch
     path idx from idx_bw_ch
+
+    output:
+    path "*.bw" into bigwig_ch
     
     when:
     !params.noCoverage && !params.noPairTools
