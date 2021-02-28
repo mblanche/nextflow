@@ -1,6 +1,6 @@
 #!/usr/bin/env nextflow
 
-params.expDir = 'prodEpi'
+params.expDir = 'capture'
 params.expName = 'tmp2'
 params.noJuicer = false
 
@@ -38,11 +38,12 @@ chrSizes_ch
 process juicer {
     tag "${id}"
     label 'bigTask'
-    cpus 48
-    memory "100 GB"
+    cpus 12
+    memory "24 GB"
     container 'mblanche/juicer'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/hicFiles",
+    //publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/hicFiles",
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/test",
     	mode: 'copy'
     
     input:
@@ -56,7 +57,7 @@ process juicer {
     
     script:
     """
-    java -Xmx96000m -Djava.awt.headless=true \
+    java -Xmx24000m -Djava.awt.headless=true \
 	-jar /juicer_tools_1.22.01.jar pre \
 	--threads ${task.cpus} \
 	-j ${task.cpus} \

@@ -4,8 +4,8 @@
 */
 
 
-params.expDir = 'prodEpi'
-params.expName = 'tmp3'
+params.expDir = 'capture'
+params.expName = 'tmp'
 params.genome = 'hg38'
 
 params.noPairTools = false
@@ -16,8 +16,8 @@ params.noCoverage = false
 
 Channel
     .fromFilePairs("${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/fastqs/*_R{1,2}*.fastq.gz",flat: true)
+    .map { prefix, file1, file2 -> tuple(prefix.split('_')[0], file1, file2) }
     .groupTuple()
-    .view()
     .set{fastqs_ch}
 
 Channel
@@ -25,30 +25,32 @@ Channel
     .ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
     .set { bwa_index }
 
-
-
 process bwa_mem {
     tag "_${id}"
     cpus 48
     memory '100 GB'
     container 'mblanche/bwa-samtools'
     
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/tmp_sam",
+    	mode: 'copy'
+	
     input:
     tuple val(id), file(R1s), file(R2s) from fastqs_ch
-    file index from bwa_index.first()
+    path index from bwa_index.first()
     
     output:
-    path "${id}.sam" into sam4chrSize, sam4pt
+    path "*.sam" into sam4chrSize, sam4pt
     
     script:
     """
     bwa mem -5SP -t ${task.cpus} \
 	${index}/${params.genome} \
-	<(zcat ${R1s}|head -n 40000) \
-	<(zcat ${R2s}|head -n 40000)\
-	>${id}.sam
+	<(zcat ${R1s}) \
+	<(zcat ${R2s}) \
+    > ${id}.sam
     """
 }
+
 
 process make_chr_size {
     tag "_${id}"
@@ -261,6 +263,9 @@ process bam_sort {
     path "${id}.bam" into bam_bw_ch
     path "${id}.bam.bai" into idx_bw_ch
     
+    when:
+    !params.noPairTools
+    
     script:
     id = bam.name.toString().replaceFirst(/_PT.bam/,'')
     """
@@ -288,6 +293,9 @@ process pairtools_split_unmapped {
     output:
     path "*_unmapped.bam" into unmapped_bam_ch
     path "*_unmapped.valid.pairs.gz" into unmapped_pairs_ch
+
+    when:
+    !params.noPairTools
 
     script:
     id = sam.name.toString().tokenize('_').get(0)
@@ -355,10 +363,11 @@ process cooler_zoomify {
     """
 }
 
+
 process juicer {
     tag "_${id}"
     cpus 48
-    memory '100 GB'
+    memory '24 GB'
     container 'mblanche/juicer'
 
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/hicFiles",
@@ -378,24 +387,22 @@ process juicer {
     script:
     id = pairs.name.toString().tokenize('.').get(0)
     """
-    java -Xmx96000m -Djava.awt.headless=true \
+        java -Xmx24000m -Djava.awt.headless=true \
 	-jar /juicer_tools_1.22.01.jar pre \
+	--threads ${task.cpus} \
+	-j ${task.cpus} \
+	-k VC,VC_SQRT,KR,SCALE \
 	${pairs} \
 	${id}.hic \
 	${chr_sizes}
-    
-    ## -j ${task.cpus} \
-    ## -k VC,VC_SQRT,KR,SCALE \
     """
 }
 
-
-process deeptools_bw {
+process bam2bw {
     tag "_${id}"
-    echo true
-    cpus 48
-    memory '100 GB'
-    container 'mblanche/deeptools'
+    cpus 16
+    
+    container 'mblanche/r-cov'
     
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bigwigs",
     	mode: 'copy'
@@ -403,17 +410,17 @@ process deeptools_bw {
     input:
     path bam from bam_bw_ch
     path idx from idx_bw_ch
-
+        
     output:
     path "*.bw" into bigwig_ch
-    
+
     when:
     !params.noCoverage && !params.noPairTools
     
     script:
     id = bam.name.toString().replaceFirst(/.bam/,'')
     """
-    bamCoverage -p ${task.cpus} -bs 1 -b ${bam} -o ${id}.bw
+    bam2bw ${bam} ${id}.bw ${task.cpus} | tee ${id}.bw
     """
 }
 
@@ -425,3 +432,4 @@ workflow.onComplete {
 	workDir.deleteDir()
     }
 }
+
