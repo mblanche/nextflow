@@ -30,9 +30,6 @@ process bwa_mem {
     cpus 48
     memory '100 GB'
     container 'mblanche/bwa-samtools'
-    
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/tmp_sam",
-    	mode: 'copy'
 	
     input:
     tuple val(id), file(R1s), file(R2s) from fastqs_ch
@@ -78,8 +75,8 @@ process make_chr_size {
 
 process pairtools_parse {
     tag "_${id}"
-    cpus 48
-    memory '100 GB'
+    cpus 14
+    memory '50 GB'
     container 'mblanche/pairtools'
 
     input:
@@ -108,7 +105,7 @@ process pairtools_parse {
 
 process pairtools_sort {
     tag "_${id}"
-    cpus 48
+    cpus 14
     memory '100 GB'
     container 'mblanche/pairtools'
 
@@ -130,8 +127,8 @@ process pairtools_sort {
 
 process pairtools_dedup {
     tag "_${id}"
-    cpus 48
-    memory '100 GB'
+    cpus 14
+    //memory '100 GB'
     container 'mblanche/pairtools'
     
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/pairtools_stat",
@@ -163,8 +160,8 @@ process pairtools_dedup {
 
 process pairtools_split_dedup {
     tag "_${id}"
-    cpus 48
-    memory '100 GB'
+    cpus 14
+    //memory '100 GB'
     container 'mblanche/pairtools'
 
     input:
@@ -189,8 +186,8 @@ process pairtools_split_dedup {
 
 process merge_pairs {
     tag "_${id}"
-    cpus 48
-    memory '100 GB'
+    cpus 14
+    //memory '100 GB'
     container 'mblanche/pairtools'
 
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/${id}",
@@ -224,7 +221,7 @@ process merge_bam {
     tag "_${id}"
     echo true
     cpus 48
-    memory '100 GB'
+    //memory '100 GB'
     container 'mblanche/bwa-samtools'
     
     input:
@@ -280,8 +277,8 @@ process bam_sort {
 
 process pairtools_split_unmapped {
     tag "_${id}"
-    cpus 48
-    memory '100 GB'
+    cpus 14
+    //memory '100 GB'
     container 'mblanche/pairtools'
         
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/unmapped",
@@ -366,7 +363,7 @@ process cooler_zoomify {
 
 process juicer {
     tag "_${id}"
-    cpus 48
+    cpus 24
     memory '24 GB'
     container 'mblanche/juicer'
 
@@ -432,4 +429,3 @@ workflow.onComplete {
 	workDir.deleteDir()
     }
 }
-
