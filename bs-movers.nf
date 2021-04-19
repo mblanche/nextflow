@@ -2,8 +2,7 @@ params.expDir = 'capture'
 params.expName = 'tmp'
 
 params.bpProject = 'Capture'
-params.biosample = 'PC_I14_29-51'
-
+params.biosample = 'PC-OM-GM-4P-1'
 
 Channel
     .from(params.biosample)
@@ -11,8 +10,9 @@ Channel
     .flatten()
     .set { biosample_ch }
 
-
 process findFile {
+    cpus 2
+    memory '2G'
     container 'mblanche/basespace-cli'
 
     input:
@@ -33,28 +33,31 @@ process findFile {
 
 out_ch
     .splitCsv(header: true)
-    .view()
     .set { out_ch }
+
 
 process download {
     cpus 4
+    memory '4G'
     container 'mblanche/basespace-cli'
     queue 'moversQ'
     
     publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs", mode: 'copy'
     
     input:
-    val bp_id from out_ch.flatMap { it["Id"] }
+    val id from out_ch.flatMap { it["Id"] }
 
     output:
-    val bp_id into id
-    file '*_R1*.fastq.gz' into R1s_ch
-    file '*_R2*.fastq.gz' into R2s_ch
+    tuple id, path('*_R1*.fastq.gz'), path('*_R2*.fastq.gz') into fastqs_ch
     
     """
     bs download dataset \
-     	--id=${bp_id} \
+     	--id=${id} \
  	-o .
     """
 }
 
+fastqs_ch
+    .map { id, file1, file2 -> tuple(file1.name.toString().split('_')[0], file1, file2) }
+    .groupTuple()
+    .view()

@@ -13,17 +13,26 @@ bam <- BamFile(args[1])
 bigwig_file <- args[2]
 ncores <- args[3]
 
-cov <- as(mclapply(seqlevels(bam),function(chr){
+## cov <- as(mclapply(seqlevels(bam),function(chr){
+## params <- ScanBamParam(which=GRanges(chr,IRanges(1,seqlengths(bam)[chr])))
+## aln <- readGAlignments(bam,param=params)
+## coverage(aln)[[chr]]
+## },mc.preschedule=TRUE,mc.cores=ncores),"RleList")
+
+cov <- lapply(seqlevels(bam),function(chr){
 params <- ScanBamParam(which=GRanges(chr,IRanges(1,seqlengths(bam)[chr])))
 aln <- readGAlignments(bam,param=params)
 coverage(aln)[[chr]]
-},mc.preschedule=TRUE,mc.cores=ncores),"RleList")
+})
 
-names(cov) <- seqlevels(bam)
 
-gr <- as(cov,"GRanges")
+cov
 
-export(gr,bigwig_file)
+#names(cov) <- seqlevels(bam)
+
+#gr <- as(cov,"GRanges")
+
+#export(gr,bigwig_file)
 
 
 

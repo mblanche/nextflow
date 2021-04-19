@@ -1,0 +1,800 @@
+#!/usr/bin/env nextflow
+
+params.expDir = false
+params.expName = false
+
+params.biosample = false
+params.genewizMap = false
+params.fastqDir = false
+
+params.libraryID = false
+
+params.genome = 'hg38'
+
+params.downloadOnly = false
+params.noPairTools = false
+params.noJuicer = false
+params.noCooler = false
+params.noCoverage = false
+params.help = false
+
+
+def helpMessage() {
+    log.info"""
+    Usage:
+
+    The typical command for running the pipeline is as follows:
+
+        epiPipe --biosample bisample1,biosample2,biosample3  --expDir prodEpi --expName myExpName  -profile spot -bg
+
+         or
+
+        epiPipe --fastqDir ~/ebs/ref_push/prodEpi/myExpName/fastqs/ --expDir prodEpi --expName myExpName  -profile spot -bg
+
+    Mandatory arguments:
+        --expDir [nameOfDir]         Name of the base directory in ref_push where the data will be saved.
+        --expName [nameOfDir]        Name of the experiment directory where the data will be saved.
+
+    Input (minimum one of these, can be mixed):
+        --biosample [str]            Comma seperated list of BaseSpace biosamples.
+        --fastqDir [str]             Path to a directoy of fastq files.
+        --genewizMap [str]           CSV file descrbibing the LIMS id to S3 path on GeneWiz bucket. Field: LIMS_ID,LIBRAY_ID,S3_path_R1,S3_path_R2
+
+    Restriting to a set of library:
+        --libraryID [str]            Comma seperated list of library prefixes. Need to be used in conjunction with --fastqDir.
+    
+    References:
+        --genome [str]               Name of the genome to use. Possible choice: hg38, mm10, dmel. Default: hg38.
+    
+    Process selector (default all processes):
+    --downloadOnly               Only download BaseSpace biosample fastq files to local dir
+
+
+    Workflow:
+        -bg                          Will send the piepline in background mode (similar to nohup).
+        
+
+    """.stripIndent()
+}
+
+if (params.help){
+    helpMessage()
+    exit 0
+}
+
+
+if ( !(params.biosample || params.fastqDir || params.genewizMap) ){
+    exit 1, "You need to use either --biosample aBaseSpace-biosample or --fastqDir path/to/bam/files or --genewizMap mappingFiles.csv. Use --help to get the full usage." 
+}
+
+
+if ( !(params.expDir && params.expName) ){
+    exit 1, "--expDir AND --expName --biosample are required arguments. Use --help to get the full usage." 
+}
+
+Channel
+    .fromPath("${HOME}/ebs/genome/nextflow/${params.genome}", checkIfExists: true)
+    .ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
+    .set { bwa_index }
+
+
+if (params.biosample){
+    Channel
+	.from(params.biosample)
+	.splitCsv()
+	.flatten()
+	.set { biosample_ch }
+} else {
+    Channel
+	.empty()
+    	.into { biosample_ch;fastqs_ch }
+}
+
+if (params.fastqDir){
+    if (params.libraryID){
+	Channel
+	    .from(params.libraryID)
+	    .splitCsv()
+	    .flatten()
+	    .map {id -> file("${params.fastqDir}/${id}_*R1*.fastq.gz")}
+	    .flatten()
+	    .map {R1 ->
+		def m = R1.name.toString() =~ /(.+)_R1/
+		    def id = m[0][1]
+		def R2 = file("${params.fastqDir}/${id}*_R2*.fastq.gz")
+		if (R2.size() > 1) {
+		    return( "R2 has more than one entry")
+		} else {
+		    return(tuple(id, R1, R2[0]) )
+		}
+	    }
+	    .set{fastqDir_ch}
+		    
+    } else {
+	Channel
+	    .fromFilePairs("${params.fastqDir}/*_{R1,R2}*.fastq.gz",
+			   chekIfExists: true,
+			   flat: true)
+	    .set{fastqDir_ch}
+	    
+    }
+} else {
+    if (params.libraryID){
+	exit 1, "--libraryID needs to be used in conjuction with --fastqDir. Use --help to get details"
+    } else {
+	Channel
+	    .empty()
+	    .set{fastqDir_ch}
+    }
+}
+    
+
+if (params.genewizMap) {
+    def i = 0
+    Channel
+	.fromPath(params.genewizMap)
+	.splitCsv()
+	.map{row ->
+	    i=i+1
+	    tuple(row[0]+"-rep"+i,file(row[2]),file(row[3]))
+	}
+	.set{genewiz_ch}
+
+    process copy_manifest {
+	cpus 1
+	memory "2 GB"
+	container 'mblanche/basespace-cli'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}",
+	    mode: 'copy'
+	
+	input:
+	path manifest from Channel.fromPath(params.genewizMap)
+
+	output:
+	path manifest into outManifest
+
+	script:
+	"""
+	cat ${manifest}
+	"""
+    }
+    
+}else{
+    Channel
+	.empty()
+	.set{genewiz_ch}
+}
+
+
+if (params.biosample){
+    process get_bs_files {
+	cpus 1
+	memory '1G'
+	container 'mblanche/basespace-cli'
+	
+	input:
+	val bs from biosample_ch
+	
+	output:
+	stdout into bs_id_ch
+	
+	script:
+	"""
+	bs biosample content -n ${bs} -F Id -F FilePath -f csv | \
+	    awk 'BEGIN{OFS =","} \
+	    NR == 1 {print "biosample", \$0} \
+	    NR > 1  {print "${bs}", \$0}'
+	"""
+    }
+
+    process get_bs_dataset {
+	cpus 1
+	memory '1G'
+	container 'mblanche/basespace-cli'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs",
+	mode: 'copy',
+	    saveAs: {filename -> filename.endsWith('.error') ? filename : null}
+	
+	input:
+	tuple file_name, bs, id from bs_id_ch
+	    .splitCsv(header: true)
+	    .map { row -> tuple(row.FilePath,row.biosample, row.Id )}
+	    .groupTuple()
+	    .map { tuple(it[0], it[1].unique()[0],it[2]) }
+	
+	output:			
+	path "bs_data_set.csv" optional true into bs_dataset_ch
+	path "*.error" optional true into error_ch
+	
+	script:
+	if (id.size() >1){
+	    """
+	    echo found more than one identical file names for biosample ${bs} > ${bs}.error
+	    """
+	} else {
+	    """
+	    bs list dataset \
+    		--like-type=illumina.fastq.v1.8 \
+    		--input-biosample=${bs} \
+    		--like-type=illumina.fastq.v1.8 \
+    		-f csv | \
+		awk 'BEGIN{OFS =","} \
+		NR == 1 {print "biosample", \$0} \
+		NR > 1  {print "${bs}", \$0}' > bs_data_set.csv 
+	    """
+	}
+    }
+
+    process download_bs {
+	echo true
+	label "movers"
+	cpus 4
+	memory '4G'
+	container 'mblanche/basespace-cli'
+	queue 'moversQ'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs",
+	    mode: 'copy'
+	
+	input:
+	tuple bs, val(bs_id) from bs_dataset_ch
+            .splitCsv(header: true)
+	    .unique()
+	    .map{row -> tuple(row.biosample, row.Id)}
+	
+	output:
+	tuple bs, file("*_R1*.fastq.gz"), file("*_R2*.fastq.gz") into fastqs_ch
+	
+	script:
+	"""
+	bs download dataset \
+     	    --id=${bs_id} \
+ 	    -o . 
+	"""
+    }
+}
+
+
+process bwa_mem {
+    tag "_${id}"
+    cpus 48
+    memory '48 GB'
+    container 'mblanche/bwa-samtools'
+    
+    input:
+    tuple val(id), file(R1s), file(R2s) from fastqs_ch
+    	.mix(fastqDir_ch)
+	.mix(genewiz_ch)
+
+    path index from bwa_index.first()
+    
+    output:
+    tuple id, path("*.bam"), path("*.tsv") into  pairtools_parse_ch
+    
+    when:
+    !params.downloadOnly
+    
+    script:
+    """
+    bwa mem -5SP -t ${task.cpus} \
+    	${index}/${params.genome} \
+    	<(zcat ${R1s}) \
+    	<(zcat ${R2s}) \
+	|samtools view -@ ${task.cpus} -Shb -o ${id}.bam - \
+	&& samtools view -H ${id}.bam | \
+	awk -v OFS='\t' '/^@SQ/ && !(\$2 ~ /:(chr|"")M/) {split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' | \
+	sort -V -k1,1 \
+	> chr_size.tsv
+    """
+}
+
+
+process pairtools_parse {
+    tag "_${id}"
+    cpus 14
+    memory '50 GB'
+    container 'mblanche/pairtools'
+
+    input:
+    tuple id, path(sam), path(chr_sizes) from pairtools_parse_ch
+
+    output:
+    tuple id, path("*.pairsam.gz") into pairsam_part_ch
+
+    when:
+    !params.noPairTools
+
+    script:
+    """
+    pairtools parse \
+	--min-mapq 40 \
+	--walks-policy 5unique \
+	--max-inter-align-gap 30 \
+	--nproc-in ${task.cpus} --nproc-out ${task.cpus} \
+	--chroms-path ${chr_sizes} \
+	--output ${id}.pairsam.gz \
+	${sam} 
+    """
+}
+
+process pairtools_merge_lane {
+    echo true
+    tag "_${id}"
+    cpus 14
+    memory '50 GB'
+    container 'mblanche/pairtools'
+    
+    input:
+    tuple id, path(sam) from pairsam_part_ch
+	.map {id, file ->
+            def key = id.tokenize('_').get(0)
+            return tuple(key, file)
+	}
+	.groupTuple()
+
+    output:
+    tuple id, path("*.pairsam.gz") into pairsam_ch
+
+    script:
+    if (sam.sort().size() >1) {
+	"""
+	pairtools merge -o ${id}.pairsam.gz --nproc ${task.cpus} ${sam}
+	"""
+    } else {
+	"""
+	ln -sf ${sam} ${id}_ML.pairsam.gz
+	"""
+    }
+    
+}
+
+process pairtools_sort {
+    tag "_${id}"
+    cpus 14
+    memory '100 GB'
+    container 'mblanche/pairtools'
+
+    input:
+    tuple id, path(sam) from pairsam_ch
+
+    output:
+    tuple id, path("*_sorted.pairsam.gz") into sorted_ps_ch
+    
+    when:
+    !params.noPairTools
+
+    script:
+    """
+    mkdir -p tmp 
+    pairtools sort --tmpdir ./tmp  \
+	--nproc ${task.cpus} \
+	--output ${id}_sorted.pairsam.gz \
+	$sam 
+    """
+}
+
+
+process pairtools_dedup {
+    tag "_${id}"
+    cpus 14
+    memory '40 GB'
+    container 'mblanche/pairtools'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/pairtools_stat",
+    	mode: 'copy',
+    	saveAs: {filename -> filename.endsWith('.stats') ? filename : null}
+    
+    input:
+    tuple id, path(sam) from sorted_ps_ch
+
+    output:
+    tuple id, path("*_dedup.pairsam.gz") into dedup_ps_ch
+    tuple id, path("*_unmapped.pairsam.gz") into unmapped_ps_ch
+    tuple id, path("*_pairtools.stats") into ps_stats_ch
+
+    when:
+    !params.noPairTools
+    
+    script:
+    """
+    pairtools dedup --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
+	--mark-dups \
+	--output-stats ${id}_pairtools.stats  \
+	--output ${id}_dedup.pairsam.gz \
+	--output-unmapped ${id}_unmapped.pairsam.gz \
+	${sam}
+    """
+}
+
+
+process pairtools_stats_merge {
+    echo true
+    tag "_${id}"
+    cpus 1
+    memory '4 GB'
+    container 'mblanche/pt-stats'
+
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}",
+	mode: 'copy'
+    
+    input:
+    tuple id, path(stats) from ps_stats_ch
+
+    output:
+    tuple id, path('pairtoolsStats.csv') into merged_stats_ch
+    
+    when:
+    !params.noPairTools
+    
+    script:
+    """
+    pairtoolsStat.sh ${stats} > pairtoolsStats.csv
+    """
+}
+
+process pairtools_split_dedup {
+    tag "_${id}"
+    cpus 14
+    memory '40 GB'
+    container 'mblanche/pairtools'
+
+    input:
+    tuple id, path(sam) from dedup_ps_ch
+    
+    output:
+    tuple id, path("*.bam") into bam_parts_ch
+    tuple id, path("*.valid.pairs.gz") into pairs_parts_ch, pairs_parts_ch_test
+
+    when:
+    !params.noPairTools
+    
+    script:
+    """
+    pairtools split --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
+	--output-sam ${id}_PT.bam  \
+	--output-pairs ${id}_PT.valid.pairs.gz  \
+	${sam}
+    """
+}
+
+process merge_pairs {
+    tag "_${id}"
+    cpus 14
+    memory '40 GB'
+    container 'mblanche/pairtools'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/validPairs",
+    	mode: 'copy'
+    
+    input:
+    tuple val(id), path(pairs) from pairs_parts_ch
+    .map {id, file ->
+	if ( id.contains("-rep") ){
+	    def key = id.tokenize('-rep').get(0)
+	    return tuple(key, file)
+	} else {
+	    return( tuple(id,file) )
+	}
+    }
+    .groupTuple()
+
+    output:
+    tuple id, path("*.valid.pairs.gz"), path("*.px2") into pairs_ch_cooler, pairs_ch_juicer
+
+    when:
+    !params.noPairTools
+    
+    script:
+    pair_files = pairs.sort()
+    if (pair_files.size() >1) {
+	"""
+	pairtools merge -o ${id}.valid.pairs.gz --nproc ${task.cpus}  ${pairs}
+	pairix ${id}.valid.pairs.gz
+	"""
+    } else {
+	"""
+	ln -s ${pairs} ${id}.valid.pairs.gz
+	pairix ${id}.valid.pairs.gz
+	"""
+    }
+}
+
+process merge_bam {
+    tag "_${id}"
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/bwa-samtools'
+
+    input:
+    tuple id, path(bam_part) from bam_parts_ch
+	.map {id, file ->
+	    if ( id.contains("-rep") ){
+		def key = id.tokenize('-rep').get(0)
+		return tuple(key, file)
+	    } else {
+		return( tuple(id,file) )
+	    }
+	}
+	.groupTuple()
+
+    when:
+    !params.noPairTools
+
+    output:
+    tuple id, path("*.bam") into merged_bam_sort_ch
+
+    script:
+    bam_files = bam_part.sort()
+    if (bam_files.size() >1) {
+	"""
+	samtools merge -@ ${task.cpus} ${id}_MB.bam ${bam_part}
+	"""
+    } else {
+	"""
+	ln -s ${bam_part} ${id}_MB.bam
+	"""
+    }
+}
+
+process bam_sort {
+    tag "bam_sort_${id}"
+    cpus 48
+    memory '150 GB'
+    container 'mblanche/bwa-samtools'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bam",
+	mode: 'copy'
+    
+    input:
+    tuple id, path(bam) from merged_bam_sort_ch
+    
+    output:
+    tuple id, path("${id}.bam"),path("${id}.bam.bai") into bam_bigwig_ch
+    tuple id, path("*.tsv") into chrSizes_cooler_ch, chrSizes_juicer_ch
+
+    when:
+    !params.noPairTools
+    
+    script:
+    """
+    samtools sort -m 2G \
+	-@ ${task.cpus} \
+	-o ${id}.bam \
+	${bam} 
+
+    samtools index -@${task.cpus} ${id}.bam
+
+    samtools view -H ${id}.bam | \
+	awk -v OFS='\t' '/^@SQ/ && !(\$2 ~ /:(chr|"")M/) {split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' | \
+	sort -V -k1,1 \
+	> chr_size.tsv
+
+    """
+}
+
+process pairtools_split_unmapped {
+    tag "_${id}"
+    cpus 14
+    memory '40 GB'
+    container 'mblanche/pairtools'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/unmapped",
+    	mode: 'copy'
+
+    input:
+    tuple id, path(sam) from unmapped_ps_ch
+    
+    output:
+    path "*_unmapped.bam" into unmapped_bam_ch
+    path "*_unmapped.valid.pairs.gz" into unmapped_pairs_ch
+
+    when:
+    !params.noPairTools
+
+    script:
+    """
+    pairtools split --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
+	--output-sam ${id}_unmapped.bam  \
+	--output-pairs ${id}_unmapped.valid.pairs.gz  \
+	${sam}
+    """
+}
+
+process cooler_cload {
+    tag "_${id}"
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/cooler'
+
+    input:
+    tuple id, path(pairs), path(idx) from pairs_ch_cooler
+    tuple id2, path(chr_sizes) from chrSizes_cooler_ch
+    
+    output:
+    tuple id, path("*.cool") into cooler_ch
+        
+    when:
+    !params.noCooler && !params.noPairTools
+
+    script:
+    """
+    cooler cload pairix \
+	-p ${task.cpus} \
+	${chr_sizes}:1000 \
+	${pairs} \
+	${id}.cool
+    """
+}
+
+process balance_cooler {
+    tag "_${id}"
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/cooler'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/${id}",
+    	mode: 'copy'
+    
+    input:
+    tuple id, path(cooler) from cooler_ch
+
+    when:
+    !params.noCooler && !params.noPairTools
+
+    output:
+    tuple id, path(cooler) into cooler_zoomify_ch, cooler_mustache_ch
+    
+    script:
+    """
+    cooler balance -p ${task.cpus} ${cooler}
+    """
+}
+
+process cooler_zoomify {
+    tag "_${id}"
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/cooler'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/${id}",
+    	mode: 'copy'
+    
+    input:
+    tuple id, path(cooler) from cooler_zoomify_ch
+
+    when:
+    !params.noCooler && !params.noPairTools
+
+    output:
+    tuple id, path("*.mcool") into mcool_ch
+    
+    script:
+    """
+    cooler zoomify --balance -p ${task.cpus} ${cooler}
+    """
+}
+
+ process juicer {
+    tag "_${id}"
+    cpus 24
+    memory '150 GB'
+    container 'mblanche/juicer'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/hicFiles",
+    mode: 'copy'
+    
+    input:
+    tuple id, path(pairs), path(idx) from pairs_ch_juicer
+    tuple id2, path(chr_sizes) from chrSizes_juicer_ch
+    
+    output:
+    tuple id, path("*.hic") into arrowHead_ch
+
+    when:
+    !params.noJuicer && !params.noPairTools
+ 
+    script:
+    """
+    java -Xmx96000m -Djava.awt.headless=true \
+	-jar /juicer_tools_1.22.01.jar pre \
+	--threads ${task.cpus} \
+	-j ${task.cpus} \
+	-k VC,VC_SQRT,KR,SCALE \
+	${pairs} \
+	${id}.hic \
+	${chr_sizes}
+    """
+}
+
+
+process bam2bw {
+    tag "_${id}"
+    cpus 20
+    memory '100 GB'
+    
+    container 'mblanche/r-cov'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bigwigs",
+    	mode: 'copy'
+    
+    input:
+    tuple id, path(bam),path(idx) from bam_bigwig_ch
+        
+    output:
+    tuple id, path ("*.bw") into bigwig_ch
+
+    when:
+    !params.noCoverage && !params.noPairTools
+    
+    script:
+    """
+    bam2bw ${bam} ${id}.bw ${task.cpus}
+    """
+}
+
+/*
+process mustache {
+    echo true
+    cpus 24
+    memory '100 GB'
+    container "mblanche/mustache"
+
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/mustache",
+    	mode: 'copy'
+
+    input:
+    tuple id, path(cooler) from cooler_mustache_ch
+    
+    output:
+    path "*.tsv" into loops_ch
+    
+    script:
+    """
+    mustache -p ${task.cpus} -f ${cooler} -r 5kb -o ${id}_5kb_loops.tsv
+    """
+}
+ */
+/*
+process arrowhead {
+    echo true
+    cpus 24
+    memory '24 GB'
+    container "mblanche/juicer"
+
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/arrowHead",
+	mode: 'copy'
+    
+    input:
+    tuple id, path(hic), val(res)  from arrowHead_ch
+        .combine(Channel.from(10,25))
+
+    output:
+    path "*.bed" into arrowhead_ch
+    path "*.log" into arrowhead_log_ch
+    
+    script:
+    """
+    java -Xmx24000m -Djava.awt.headless=true \
+	-jar /juicer_tools_1.22.01.jar arrowhead \
+	--threads ${task.cpus} \
+	--ignore-sparsity \
+	-r \$(( ${res} * 1000 )) \
+	-k KR \
+	${hic} \
+	${id}.tads.${res}kb.bed &> ${id}_${res}kb.log ||
+	touch ${id}.tads.${res}kb.bed
+    """
+}
+ */
+
+workflow.onComplete {
+    // will probably have to do something else with S3 work dir
+    println "Working directory is " + workDir
+    if (params.cleanup) {
+	println "Deleting directory " + workDir
+	workDir.deleteDir()
+    }
+}
+

@@ -1,0 +1,392 @@
+#!/usr/bin/env nextflow
+
+params.expDir = false
+params.expName = false
+params.groupName = false
+
+params.biosample = false
+params.fastqDir = false
+params.genewizBucket = false
+
+params.s3Path = false
+params.S3libraryID = false
+
+params.genome = 'hg38'
+
+params.antibody = false
+
+params.downloadOnly = false
+
+params.help = false
+
+
+def helpMessage() {
+    log.info"""
+    Usage:
+
+    The typical command for running the pipeline is as follows:
+
+
+        prodQC --biosample bisample1,biosample2,biosample3  --expDir prodEpi --expName myExpName  -profile spot -bg
+
+         or
+
+        prodQC  --fastqDir ~/ebs/ref_push/prodEpi/myExpName/fastqs/ --expDir prodEpi --expName myExpName  -profile spot -bg
+
+    Mandatory arguments:
+        --expDir [nameOfDir]         Name of the base directory in ref_push where the data will be saved.
+        --expName [nameOfDir]        Name of the experiment directory where the data will be saved.
+
+    Input (minimum one of these, can be mixed):
+        --biosample [str]            Comma seperated list of BaseSpace biosamples.
+        --fastqDir [str]             Path to a directoy of fastq files.
+        --s3Path [str]               Path to a S3 dirctory in the format s3://bucket/prefix/
+
+    Restriting to a set of library:
+        --S3libraryID [str]          Comma seperated list of library prefixes to subset the files in S3 directory.
+    
+    References:
+        --genome [str]               Name of the genome to use. Possible choice: hg38, mm10, dmel. Default: hg38.
+
+    Process selector (default all processes):
+        --downloadOnly               Only download BaseSpace biosample fastq files to local dir
+
+    Workflow:
+    -bg                              Will send the piepline in background mode (similar to nohup).
+        
+
+    """.stripIndent()
+}
+
+if (params.help){
+    helpMessage()
+    exit 0
+}
+
+if ( !(params.biosample || params.fastqDir || params.s3Path) ){
+    exit 1, "You need to use either --biosample aBaseSpace-biosample or --fastqDir path/to/bam/files or --s3Path s3://bucket/prefix/. Use --help to get the full usage" 
+}
+
+
+if ( !(params.expDir && params.expName) ){
+    exit 1, "--expDir AND --expName --biosample are required arguments. Use --help to get the full usage" 
+}
+
+
+Channel
+    .fromPath("${HOME}/ebs/genome/nextflow/${params.genome}", checkIfExists: true)
+    .ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
+    .set { bwa_index }
+
+
+if (params.biosample){
+    Channel
+	.from(params.biosample)
+	.splitCsv()
+	.flatten()
+	.set { biosample_ch }
+} else {
+    Channel
+	.empty()
+    	.set { biosample_ch }
+}
+
+if (params.fastqDir){
+    Channel
+	.fromFilePairs("${params.fastqDir}/*_{R1,R2}*.fastq.gz",
+		       chekIfExists: true,
+		       flat: true)
+	.into{fqDir_fqs_ch;fqDir_stat_ch}
+} else {
+    Channel
+	.empty()
+	.into{fqDir_fqs_ch;fqDir_stat_ch}
+}
+
+if (params.s3Path){
+    Channel
+    	.fromFilePairs("${params.s3Path}/*_{R1,R2}*.fastq.gz",
+		       chekIfExists: true,
+		       flat: true)
+	.set{s3_ch}
+
+    if (params.S3libraryID){
+	s3_ch
+	    .map{ id,R1,R2 ->
+		for ( item in params.S3libraryID.split(/,/, -1) ){
+		    if ( id =~/${item}/ ){
+			return(tuple id,R1,R2 )
+		    }
+		}
+	    }
+	    .into{s3_fqs_ch;s3_stat_ch;s3_dwld}
+    } else {
+	s3_ch
+	    .into{s3_fqs_ch;s3_stat_ch;s3_dwld}
+    }
+
+    process get_S3_files {
+	cpus 8
+	memory '16G'
+	container 'ubuntu:20.04'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs",
+	    mode: 'copy'
+	
+	input:
+	tuple val(id), path(R1s), path(R2s) from s3_dwld
+	
+	output:
+	tuple val(id), path(R1s), path(R2s) into dwlded
+	
+	script:
+	"""
+	echo downloading ${R1s} and ${R2s} from s3
+	"""
+    }
+    
+} else {
+    Channel
+	.empty()
+	.into{s3_fqs_ch;s3_stat_ch}
+}
+
+if (!params.biosample) {
+    Channel
+	.empty()
+	.into{bs_fqs_ch;bs_stat_ch}
+} else {
+    process get_bs_files {
+	cpus 1
+	memory '1G'
+	container 'mblanche/basespace-cli'
+	
+	input:
+	val bs from biosample_ch
+	
+	output:
+	stdout into bs_id_ch
+	
+	script:
+	"""
+	bs biosample content -n ${bs} -F Id -F FilePath -f csv | \
+	    awk 'BEGIN{OFS =","} \
+	    NR == 1 {print "biosample", \$0} \
+	    NR > 1  {print "${bs}", \$0}'
+	"""
+    }
+    
+    process get_bs_dataset {
+	cpus 1
+	memory '1G'
+	container 'mblanche/basespace-cli'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs",
+	    mode: 'copy',
+	    saveAs: {filename -> filename.endsWith('.error') ? filename : null}
+	
+	input:
+	tuple file_name, bs, id from bs_id_ch
+	    .splitCsv(header: true)
+	    .map { row -> tuple(row.FilePath,row.biosample, row.Id )}
+	    .groupTuple()
+	    .map { tuple(it[0], it[1].unique()[0],it[2]) }
+	
+	output:			
+	path "bs_data_set.csv" optional true into bs_dataset_ch
+	path "*.error" optional true into error_ch
+	
+	script:
+	if (id.size() >1){
+	    """
+	    echo found more than one identical file names for biosample ${bs} > ${bs}.error
+	    """
+	} else {
+	    """
+	    bs list dataset \
+    		--like-type=illumina.fastq.v1.8 \
+    		--input-biosample=${bs} \
+    		--like-type=illumina.fastq.v1.8 \
+    		-f csv | \
+		awk 'BEGIN{OFS =","} \
+		NR == 1 {print "biosample", \$0} \
+		NR > 1  {print "${bs}", \$0}' > bs_data_set.csv 
+	    """
+	}
+    }
+
+    process download_bs {
+	label "movers"
+	cpus 4
+	memory '4G'
+	container 'mblanche/basespace-cli'
+	queue 'moversQ'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs", mode: 'copy'
+	
+	input:
+	tuple bs, val(bs_id) from bs_dataset_ch
+            .splitCsv(header: true)
+	    .unique()
+	    .map{row -> tuple(row.biosample, row.Id)}
+        
+	output:
+	tuple bs, file("*_R1*.fastq.gz"), file("*_R2*.fastq.gz") into bs_fqs_ch, bs_stat_ch
+	
+	script:
+	"""
+	bs download dataset \
+     	--id=${bs_id} \
+ 	    -o .
+	"""
+    }
+}
+
+if (!params.downloadOnly){
+    process bwa_mem {
+	tag "${id}"
+	cpus 48
+	memory '100 GB'
+	container 'mblanche/bwa-samtools'
+	
+	input:
+	tuple val(id), file(R1s), file(R2s) from bs_fqs_ch
+	    .mix(fqDir_fqs_ch)
+	    .mix(s3_fqs_ch)
+	    .map { id, file1, file2 -> tuple(file1.name.toString().split('_')[0], file1, file2) }
+	    .groupTuple()
+	path index from bwa_index.first()
+	
+	output:
+	tuple id, file("*.sam") into sam4chrSize, sam_ch1
+	
+	script:
+	"""
+	bwa mem -5SP -t ${task.cpus} \
+	    ${index}/${params.genome} \
+	    <(zcat ${R1s}) \
+	    <(zcat ${R2s}) \
+	    > ${id}.sam
+	"""
+    }
+    
+    process bam_sort {
+	tag "${id}"
+	cpus 48
+	memory '150 GB'
+	container 'mblanche/bwa-samtools'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/bam", mode: 'copy'
+	
+	input:
+	tuple id, file(bam) from sam_ch1
+	
+	output:
+	tuple id, path("*.bam"), path("*.bai") into bam_ch, bam_preseq_ch, bam_bigwig_ch
+	
+	script:
+	"""
+	samtools sort -m 2G \
+	    -@ ${task.cpus} \
+	    -o ${id}.bam \
+	    ${bam} \
+	    && samtools index -@${task.cpus} ${id}.bam
+	"""
+    }
+    
+    process preSeq {
+	tag "${id}"
+	cpus 1
+	memory '16 GB'
+	container 'mblanche/preseq'
+	
+	input:
+	tuple id, path(bam), path(idx)  from bam_preseq_ch
+	
+	output:
+	path "*_cmplx_stat" into preseq_ch
+	
+	script:
+	"""
+	preseq lc_extrap -B -P -e 2.1e9 -s 1e8 -o ${id}_cmplx_stat ${bam} \
+	    || touch ${id}_cmplx_stat
+	"""
+    }
+    
+    process alnStats {
+	tag "${gName}"
+	cpus 24
+	memory '150 GB'
+	container 'mblanche/r-prod-qc'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}", mode: 'copy'
+	
+	input:
+	bam_ch
+	    .multiMap { id, bam, idx ->
+		bam: bam
+		idx: idx
+	    }
+	    .set{ result }
+	
+	path(bams) from result.bam.collect()
+	path(idx) from result.idx.collect()
+	path(preseq) from preseq_ch.collect()
+
+	output:
+	path "*.csv" into alnStats_ch
+	
+	script:
+	gName = params.groupName ? "${params.groupName}_alnStats":"alnStats"
+	"""
+	alnStats ${gName} ${task.cpus} \$(echo ${preseq}|tr ' ' ,) \$(echo ${bams}|tr ' ' ,)
+	"""
+    }     
+    
+    process adptStats {
+	tag "${gName}"
+	cpus 48
+	memory '150 GB'
+	container 'mblanche/r-prod-qc'
+	
+	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}", mode: 'copy'
+	
+	input:
+	path fastq from bs_stat_ch
+	    .mix(fqDir_stat_ch)
+	    .mix(s3_stat_ch)
+	    .map{it[1]}.collect()
+	
+	output:
+	path "*.csv" into adptStats_ch
+	
+	script:
+	gName = params.groupName ? "${params.groupName}_adpStats":"adptStats"
+	"""
+	adptStats $gName ${fastq} 
+	"""
+    }
+
+}
+
+process bam2bw {
+    tag "_${id}"
+    cpus 20
+    memory '100 GB'
+    
+    container 'mblanche/r-cov'
+    
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bigwigs",
+    	mode: 'copy'
+    
+    input:
+    tuple id, path(bam),path(idx) from bam_bigwig_ch
+        
+    output:
+    tuple id, path ("*.bw") into bigwig_ch
+
+    script:
+    """
+    bam2bw ${bam} ${id}.bw ${task.cpus}
+    """
+}

@@ -66,10 +66,12 @@ process make_chr_size {
     !params.noPairTools
 
     script:
-    id = id = sam.name.toString().take(sam.name.toString().lastIndexOf('.'))
+    id = sam.name.toString().take(sam.name.toString().lastIndexOf('.'))
     """
-    samtools view -H ${sam} | \
-	awk -v OFS='\t' '/^@SQ/{split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' > chr_size.tsv
+        samtools view -H ${bam} | \	
+	awk -v OFS='\t' '/^@SQ/ && !($2 ~ /:(chr|"")M/) {split($2,chr,":");split($3,ln,":");print chr[2],ln[2]}' | \
+	sort -k1,1 -V \
+	> chr_size.tsv
     """
 }
 
@@ -128,7 +130,7 @@ process pairtools_sort {
 process pairtools_dedup {
     tag "_${id}"
     cpus 14
-    //memory '100 GB'
+    memory '40 GB'
     container 'mblanche/pairtools'
     
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/pairtools_stat",
@@ -141,7 +143,7 @@ process pairtools_dedup {
     output:
     path "*_dedup.pairsam" into dedup_ps_ch
     path "*_unmapped.pairsam" into unmapped_ps_ch
-    path "*_pairtools.stats" into ps_stats
+    path "*_pairtools.stats" into ps_stats_ch
 
     when:
     !params.noPairTools
@@ -158,10 +160,34 @@ process pairtools_dedup {
     """
 }
 
+process pairtools_stats_merge {
+    tag "_${id}"
+    cpus 1
+    memory '4 GB'
+    container 'mblanche/pt-stats'
+
+    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}",
+	mode: 'copy'
+    
+    input:
+    path stats from ps_stats_ch
+
+    output:
+    path 'pairtoolsStats.csv' into merged_stats_ch
+    
+    when:
+    !params.noPairTools
+    
+    script:
+    """
+    pairtoolsStat.sh ${stats} > pairtoolsStats.csv
+    """
+}
+
 process pairtools_split_dedup {
     tag "_${id}"
     cpus 14
-    //memory '100 GB'
+    memory '40 GB'
     container 'mblanche/pairtools'
 
     input:
@@ -187,7 +213,7 @@ process pairtools_split_dedup {
 process merge_pairs {
     tag "_${id}"
     cpus 14
-    //memory '100 GB'
+    memory '40 GB'
     container 'mblanche/pairtools'
 
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/${id}",
@@ -221,7 +247,7 @@ process merge_bam {
     tag "_${id}"
     echo true
     cpus 48
-    //memory '100 GB'
+    memory '100 GB'
     container 'mblanche/bwa-samtools'
     
     input:
@@ -278,7 +304,7 @@ process bam_sort {
 process pairtools_split_unmapped {
     tag "_${id}"
     cpus 14
-    //memory '100 GB'
+    memory '40 GB'
     container 'mblanche/pairtools'
         
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/unmapped",
@@ -397,7 +423,8 @@ process juicer {
 
 process bam2bw {
     tag "_${id}"
-    cpus 16
+    cpus 20
+    memory '100 GB'
     
     container 'mblanche/r-cov'
     
@@ -417,7 +444,7 @@ process bam2bw {
     script:
     id = bam.name.toString().replaceFirst(/.bam/,'')
     """
-    bam2bw ${bam} ${id}.bw ${task.cpus} | tee ${id}.bw
+    bam2bw ${bam} ${id}.bw ${task.cpus}
     """
 }
 
