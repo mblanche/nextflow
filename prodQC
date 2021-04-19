@@ -356,7 +356,8 @@ if (!params.downloadOnly){
 	path fastq from bs_stat_ch
 	    .mix(fqDir_stat_ch)
 	    .mix(s3_stat_ch)
-	    .map{it[1]}.collect()
+	    .map{it[1]}
+	    .collect()
 	
 	output:
 	path "*.csv" into adptStats_ch
