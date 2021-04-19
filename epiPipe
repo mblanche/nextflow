@@ -420,7 +420,7 @@ process pairtools_stats_merge {
 	mode: 'copy'
     
     input:
-    tuple id, path(stats) from ps_stats_ch
+    tuple id, path(stats) from ps_stats_ch.concat()
 
     output:
     tuple id, path('pairtoolsStats.csv') into merged_stats_ch
