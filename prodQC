@@ -19,6 +19,7 @@ params.downloadOnly = false
 
 params.help = false
 
+params.outDir = false
 
 def helpMessage() {
     log.info"""
@@ -34,8 +35,7 @@ def helpMessage() {
         prodQC  --fastqDir ~/ebs/ref_push/prodEpi/myExpName/fastqs/ --expDir prodEpi --expName myExpName  -profile spot -bg
 
     Mandatory arguments:
-        --expDir [nameOfDir]         Name of the base directory in ref_push where the data will be saved.
-        --expName [nameOfDir]        Name of the experiment directory where the data will be saved.
+        --outDir [pathOfDir]         Path of where to publish the data, can be local or an S3 accessible bucket
 
     Input (minimum one of these, can be mixed):
         --biosample [str]            Comma seperated list of BaseSpace biosamples.
@@ -68,8 +68,8 @@ if ( !(params.biosample || params.fastqDir || params.s3Path) ){
 }
 
 
-if ( !(params.expDir && params.expName) ){
-    exit 1, "--expDir AND --expName --biosample are required arguments. Use --help to get the full usage" 
+if ( !(params.outDir) ){
+    exit 1, "--outDir is a required argument. Use --help to get the full usage" 
 }
 
 
@@ -130,7 +130,7 @@ if (params.s3Path){
 	memory '16G'
 	container 'ubuntu:20.04'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs",
+	publishDir "${params.outDir}/fastqs",
 	    mode: 'copy'
 	
 	input:
@@ -175,13 +175,14 @@ if (!params.biosample) {
 	    NR > 1  {print "${bs}", \$0}'
 	"""
     }
+
     
     process get_bs_dataset {
 	cpus 1
 	memory '1G'
 	container 'mblanche/basespace-cli'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs",
+	publishDir "${params.outDir}/fastqs",
 	    mode: 'copy',
 	    saveAs: {filename -> filename.endsWith('.error') ? filename : null}
 	
@@ -214,7 +215,7 @@ if (!params.biosample) {
 	    """
 	}
     }
-
+    
     process download_bs {
 	label "movers"
 	cpus 4
@@ -222,7 +223,7 @@ if (!params.biosample) {
 	container 'mblanche/basespace-cli'
 	queue 'moversQ'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs", mode: 'copy'
+	publishDir "${params.outDir}/fastqs", mode: 'copy'
 	
 	input:
 	tuple bs, val(bs_id) from bs_dataset_ch
@@ -276,7 +277,7 @@ if (!params.downloadOnly){
 	memory '150 GB'
 	container 'mblanche/bwa-samtools'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/bam", mode: 'copy'
+	publishDir "${params.outDir}/bam", mode: 'copy'
 	
 	input:
 	tuple id, file(bam) from sam_ch1
@@ -319,7 +320,7 @@ if (!params.downloadOnly){
 	memory '150 GB'
 	container 'mblanche/r-prod-qc'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}", mode: 'copy'
+	publishDir "${params.outDir}", mode: 'copy'
 	
 	input:
 	bam_ch
@@ -349,7 +350,7 @@ if (!params.downloadOnly){
 	memory '150 GB'
 	container 'mblanche/r-prod-qc'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}", mode: 'copy'
+	publishDir "${params.outDir}", mode: 'copy'
 	
 	input:
 	path fastq from bs_stat_ch
@@ -376,7 +377,7 @@ process bam2bw {
     
     container 'mblanche/r-cov'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bigwigs",
+    publishDir "${params.outDir}/bigwigs",
     	mode: 'copy'
     
     input:
