@@ -1,7 +1,6 @@
-#!/usr/bin/env nextflow
+%#!/usr/bin/env nextflow
 
-params.expDir = false
-params.expName = false
+params.outDir = false
 
 params.biosample = false
 params.genewizMap = false
@@ -17,22 +16,20 @@ params.noCooler = false
 params.noCoverage = false
 params.help = false
 
-
 def helpMessage() {
     log.info"""
     Usage:
 
     The typical command for running the pipeline is as follows:
 
-        epiPipe --biosample bisample1,biosample2,biosample3  --expDir prodEpi --expName myExpName  -profile spot -bg
+        epiPipe --biosample bisample1,biosample2,biosample3  --outDir ~/ebs/ref_push/prodEpi/myExpName
 
          or
 
-        epiPipe --fastqDir ~/ebs/ref_push/prodEpi/myExpName/fastqs/ --expDir prodEpi --expName myExpName  -profile spot -bg
+        epiPipe --fastqDir ~/ebs/ref_push/prodEpi/myExpName/fastqs/ --outDir ~/ebs/ref_push/prodEpi/myExpName
 
     Mandatory arguments:
-        --expDir [nameOfDir]         Name of the base directory in ref_push where the data will be saved.
-        --expName [nameOfDir]        Name of the experiment directory where the data will be saved.
+        --outDir [pathOfDir]         Path of where to publish the data, can be local or an S3 accessible bucket
 
     Input (minimum one of these, can be mixed):
         --biosample [str]            Comma seperated list of BaseSpace biosamples.
@@ -62,8 +59,8 @@ if ( !(params.biosample || params.fastqDir || params.genewizMap) ){
 }
 
 
-if ( !(params.expDir && params.expName) ){
-    exit 1, "--expDir AND --expName --biosample are required arguments. Use --help to get the full usage." 
+if ( !(params.outDir) ){
+    exit 1, "--outDir is a required arguments. Use --help to get the full usage." 
 }
 
 Channel
@@ -139,7 +136,7 @@ if (params.genewizMap) {
 	memory "2 GB"
 	container 'mblanche/basespace-cli'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}",
+	publishDir "${params.outDir}",
 	    mode: 'copy'
 	
 	input:
@@ -187,7 +184,7 @@ if (params.biosample){
 	memory '1G'
 	container 'mblanche/basespace-cli'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs",
+	publishDir "${params.outDir}/fastqs",
 	mode: 'copy',
 	    saveAs: {filename -> filename.endsWith('.error') ? filename : null}
 	
@@ -229,7 +226,7 @@ if (params.biosample){
 	container 'mblanche/basespace-cli'
 	queue 'moversQ'
 	
-	publishDir "/mnt/ebs/ref_push/${params.expDir}/${params.expName}/fastqs",
+	publishDir "${params.outDir}/fastqs",
 	    mode: 'copy'
 	
 	input:
@@ -373,7 +370,7 @@ process pairtools_dedup {
     memory '40 GB'
     container 'mblanche/pairtools'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/pairtools_stat",
+    publishDir "${params.outDir}/pairtools_stat",
     	mode: 'copy',
     	saveAs: {filename -> filename.endsWith('.stats') ? filename : null}
     
@@ -407,7 +404,7 @@ process pairtools_stats_merge {
     memory '4 GB'
     container 'mblanche/pt-stats'
 
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}",
+    publishDir "${params.outDir}"
 	mode: 'copy'
     
     input:
@@ -456,7 +453,7 @@ process merge_pairs {
     memory '40 GB'
     container 'mblanche/pairtools'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/validPairs",
+    publishDir "${params.outDir}/validPairs",
     	mode: 'copy'
     
     input:
@@ -535,7 +532,7 @@ process bam_sort {
     memory '150 GB'
     container 'mblanche/bwa-samtools'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bam",
+    publishDir "${params.outDir}/bam",
 	mode: 'copy',
 	pattern: "${id}.bam"
         
@@ -572,7 +569,7 @@ process pairtools_split_unmapped {
     memory '40 GB'
     container 'mblanche/pairtools'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/unmapped",
+    publishDir "${params.outDir}/unmapped",
     	mode: 'copy'
 
     input:
@@ -626,7 +623,7 @@ process balance_cooler {
     memory '100 GB'
     container 'mblanche/cooler'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/${id}",
+    publishDir "${params.outDir}/coolerFiles/${id}",
     	mode: 'copy'
     
     input:
@@ -650,7 +647,7 @@ process cooler_zoomify {
     memory '100 GB'
     container 'mblanche/cooler'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/coolerFiles/${id}",
+    publishDir "${params.outDir}/coolerFiles/${id}",
     	mode: 'copy'
     
     input:
@@ -674,7 +671,7 @@ process cooler_zoomify {
     memory '150 GB'
     container 'mblanche/juicer'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/hicFiles",
+    publishDir "${params.outDir}/hicFiles",
     mode: 'copy'
     
     input:
@@ -708,7 +705,7 @@ process bam2bw {
     
     container 'mblanche/r-cov'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bigwigs",
+    publishDir "${params.outDir}/bigwigs",
     	mode: 'copy'
     
     input:
@@ -733,7 +730,7 @@ process mustache {
     memory '100 GB'
     container "mblanche/mustache"
 
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/mustache",
+    publishDir "${params.outDir}/mustache",
     	mode: 'copy'
 
     input:
@@ -755,7 +752,7 @@ process arrowhead {
     memory '24 GB'
     container "mblanche/juicer"
 
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/arrowHead",
+    publishDir "${params.outDir}/arrowHead",
 	mode: 'copy'
     
     input:

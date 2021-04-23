@@ -28,11 +28,11 @@ def helpMessage() {
     The typical command for running the pipeline is as follows:
 
 
-        prodQC --biosample bisample1,biosample2,biosample3  --expDir prodEpi --expName myExpName  -profile spot -bg
+        prodQC --biosample bisample1,biosample2,biosample3  --outDir ~/ebs/ref_push/prodEpi/myExpName
 
          or
 
-        prodQC  --fastqDir ~/ebs/ref_push/prodEpi/myExpName/fastqs/ --expDir prodEpi --expName myExpName  -profile spot -bg
+        prodQC  --fastqDir ~/ebs/ref_push/prodEpi/myExpName/fastqs/ --outDir ~/ebs/ref_push/prodEpi/myExpName
 
     Mandatory arguments:
         --outDir [pathOfDir]         Path of where to publish the data, can be local or an S3 accessible bucket
