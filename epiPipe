@@ -11,7 +11,6 @@ params.libraryID = false
 
 params.genome = 'hg38'
 
-params.downloadOnly = false
 params.noPairTools = false
 params.noJuicer = false
 params.noCooler = false
@@ -46,10 +45,6 @@ def helpMessage() {
     References:
         --genome [str]               Name of the genome to use. Possible choice: hg38, mm10, dmel. Default: hg38.
     
-    Process selector (default all processes):
-    --downloadOnly               Only download BaseSpace biosample fastq files to local dir
-
-
     Workflow:
         -bg                          Will send the piepline in background mode (similar to nohup).
         
@@ -271,9 +266,6 @@ process bwa_mem {
     
     output:
     tuple id, path("*.bam"), path("*.tsv") into  pairtools_parse_ch
-    
-    when:
-    !params.downloadOnly
     
     script:
     """
