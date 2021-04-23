@@ -62,7 +62,6 @@ if (params.help){
     exit 0
 }
 
-
 if ( !(params.biosample || params.fastqDir || params.genewizMap) ){
     exit 1, "You need to use either --biosample aBaseSpace-biosample or --fastqDir path/to/bam/files or --genewizMap mappingFiles.csv. Use --help to get the full usage." 
 }
@@ -420,7 +419,7 @@ process pairtools_stats_merge {
 	mode: 'copy'
     
     input:
-    tuple id, path(stats) from ps_stats_ch.concat()
+    tuple id, path(stats) from ps_stats_ch.collect()
 
     output:
     tuple id, path('pairtoolsStats.csv') into merged_stats_ch
@@ -545,8 +544,9 @@ process bam_sort {
     container 'mblanche/bwa-samtools'
     
     publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/bam",
-	mode: 'copy'
-    
+	mode: 'copy',
+	pattern: "${id}.bam"
+        
     input:
     tuple id, path(bam) from merged_bam_sort_ch
     
@@ -712,7 +712,7 @@ process cooler_zoomify {
 process bam2bw {
     tag "_${id}"
     cpus 20
-    memory '100 GB'
+    memory '175 GB'
     
     container 'mblanche/r-cov'
     

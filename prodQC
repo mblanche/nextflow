@@ -329,9 +329,9 @@ if (!params.downloadOnly){
 	    }
 	    .set{ result }
 	
-	path(bams) from result.bam.concat()
-	path(idx) from result.idx.concat()
-	path(preseq) from preseq_ch.concat()
+	path(bams) from result.bam.collect()
+	path(idx) from result.idx.collect()
+	path(preseq) from preseq_ch.collect()
 
 	output:
 	path "*.csv" into alnStats_ch
@@ -356,7 +356,7 @@ if (!params.downloadOnly){
 	    .mix(fqDir_stat_ch)
 	    .mix(s3_stat_ch)
 	    .map{it[1]}
-	    .concat()
+	    .collect()
 	
 	output:
 	path "*.csv" into adptStats_ch
