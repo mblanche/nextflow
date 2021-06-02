@@ -57,7 +57,7 @@ process chrm_size {
     """
     pairix ${pairs}
 
-    pairix -H ${pairs} \
+    pairix -H -f ${pairs} \
 	| awk -v OFS='\t' '/^#chromsize/  {print \$2,\$3}' \
 	| sort -V -k1,1 \
 	> chr_size.tsv

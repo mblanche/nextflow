@@ -293,11 +293,11 @@ if (params.biosample){
     }
 }
 
-process bwa_mem {
+process hint_pre {
     tag "_${id}"
     cpus 48
     memory '48 GB'
-    container 'mblanche/bwa-samtools'
+    container 'suwangbio/hint'
     
     input:
     tuple val(id), file(R1s), file(R2s) from fastqs_ch
@@ -311,15 +311,18 @@ process bwa_mem {
     
     script:
     """
-    bwa mem -5SP -t ${task.cpus} \
-    	${index}/${params.genome} \
-    	<(zcat ${R1s}) \
-    	<(zcat ${R2s}) \
-	|samtools view -@ ${task.cpus} -Shb -o ${id}.bam - \
-	&& samtools view -H ${id}.bam | \
-	awk -v OFS='\t' '/^@SQ/ && !(\$2 ~ /:(chr|"")M/) {split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' | \
-	sort -V -k1,1 \
-	> chr_size.tsv
+
+    hint pre -d <(zcat ${R1s|head -n 400000}),<(zcat ${R2s|head -n 400000}) \
+	-i ${index}/${params.genome} \
+	--refdir /path/to/refData/hg19 \
+	-g hg19 \
+	--informat fastq \
+	--outformat cooler \
+	-n test \
+	-o /path/to/outputdir \
+	--pairtoolspath /path/to/pairtools \
+	--samtoolspath /path/to/samtools \
+	--coolerpath /path/to/cooler\
     """
 }
 
@@ -804,7 +807,7 @@ process mustache {
     tag "_${id}"
     cpus 24
     memory '48 GB'
-    container "mblanche/mustache"
+    container "mblanche/mustache:1.1.3"
 
     publishDir "${params.outDir}/mustache",
 	mode: 'copy'

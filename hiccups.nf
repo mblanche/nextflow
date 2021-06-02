@@ -12,18 +12,18 @@ def helpMessage() {
 
     The typical command for running the pipeline is as follows:
 
-        arrowHead  --coolDir ~/path/to/coolFiles/location
+        hiccups  --coolDir ~/path/to/coolFiles/location
 
          or
 
-        arrowHead  --coolDir ~/path/to/coolFiles/location --outDir ~/path/to/where/to/save/files
+        hiccups  --coolDir ~/path/to/coolFiles/location --outDir ~/path/to/where/to/save/files
 
     Mandatory arguments:
         --hicDir [path]             Name of the a direcoty with cool files (can be local or valid S3 location).
     
     Facultative arguments
         --outDir [path]             Path to a diectory to save result files (can be local or valid S3 location).
-        --resolutions [integers]    Comma-seperated list of resolutions in kb. Default: [5,10]
+        --resolutions [integers]    Comma-seperated list of resolutions in kb. Default: [5,10,25]
 
     """.stripIndent()
 }
@@ -38,7 +38,7 @@ if (!params.hicDir) {
 }
 
 if(!params.outDir){
-    outDir = file(params.hicDir).getParent() + "/arrowHead"
+    outDir = file(params.hicDir).getParent() + "/hiccups"
 } else {
     outDir = params.outDir
 }
@@ -46,42 +46,44 @@ if(!params.outDir){
 if (params.resolutions){
     resolutions = params.resolutions.split(/,/,-1)
 } else {
-    resolutions = [5,10]
+    resolutions = [5,10,25]
 }
 
 Channel
     .fromPath("${params.hicDir}/*.hic")
-    .first()
-    .set{arrowHead_ch}
+    .set{hiccups_ch}
 
-process arrowhead {
-    cpus 12
-    memory '40 GB'
-    container "mblanche/juicer"
+process hiccups {
+    echo true
+    label 'gpu'
+    accelerator 1
+    cpus 6
+    memory '30 GB'
+    container "mblanche/hiccups-gpu"
 
     publishDir "${outDir}",
 	mode: 'copy'
     
     input:
-    tuple path(hic), val(res) from arrowHead_ch
-	.combine(Channel.from(resolutions))
-
+    tuple path(hic), val(res)  from hiccups_ch.first()
+	.combine(Channel.from(resolutions.collect{it*1000}.join(',')))
+    
     output:
-    tuple id, path("${id}_${res}kb") into arrowhead_ch
+    tuple id, path("${id}_loops") into hiccups_out_ch
+    
 
     script:
     id = hic.name.toString().take(hic.name.toString().lastIndexOf('.'))
-    bpRes = res.toInteger() * 1000
     """
-    mkdir -p ${id}_${res}kb && touch ${id}_${res}kb/${bpRes}_blocks.bedpe
     java -Xmx24000m \
 	-jar /juicer_tools.jar \
-	arrowhead \
+	hiccups \
 	--threads ${task.cpus} \
 	--ignore-sparsity \
-	-r ${bpRes} \
+	-m 500 \
+	-r ${res} \
 	-k KR \
 	${hic} \
-	${id}_${res}kb
+	${id}_loops
     """
 }

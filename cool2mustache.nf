@@ -45,86 +45,33 @@ if(!params.outDir){
 
 
 Channel
-    .fromPath("${params.coolDir}/**.cool")
-    .into{cool_ch;cool_ch2}
-
-process get_chr {
-    tag "_${id}"
-    cpus 48
-    memory '100 GB'
-    container 'mblanche/cooler'
-
-    input:
-    path cool from cool_ch
-
-    output:
-    stdout into chr_ch
-    
-    script:
-    id = cool.name.take(cool.name.lastIndexOf('.'))
-    """
-    cooler dump -t chroms -c name ${cool} |grep -v chrY | awk -v f=${id} -v OFS=, '{print f,\$0}'
-    """
-}
+    .fromPath("${params.coolDir}/*.cool")
+    .set{mustache_mcool_ch}
 
 process mustache {
+    tag "_${id}"
     cpus 24
     memory '48 GB'
     container "mblanche/mustache"
 
-    chr_ch
-	.splitText()
-	.splitCsv()
-	.set{left}
-    
-    cool_ch2
-	.map{cool ->
-	    id = cool.name.take(cool.name.lastIndexOf('.'))
-	    return(tuple(id,cool))
-	}
-	.cross(left)
-	.map{file,chr ->
-	    return(tuple(file[0],file[1],chr[1]))
-	}
-	.set{results}
-    
-    input:
-    tuple id, path(cool), val(chr) from results
-    
-    output:
-    tuple id, path("*.tsv") into mustache_2_merge_ch
-    
-    script:
-    """
-    mustache -p ${task.cpus} \
-	-f ${cool} \
-	-r ${params.resolution}kb \
-	-ch ${chr} \
-	-o ${id}_${chr}_${params.resolution}kb_loops.tsv
-    """
-}
-
-
-
-process merge_mustache {
-    echo true
-    cpus 4
-    memory '8 GB'
-    container "ubuntu:20.04"
-    
     publishDir "${params.outDir}",
 	mode: 'copy'
-    
+
     input:
-    tuple id, path(mustache) from mustache_2_merge_ch
-	.groupTuple()
+    tuple path(mcool), val(res)  from mustache_mcool_ch
+	.combine(Channel.from(1000,4000,16000))
     
     output:
-    tuple id, path("*.tsv") into loops_ch
-    
+    tuple id, path("*.tsv") into mustache_out_ch
+
     script:
+    id = mcool.name.take(mcool.name.lastIndexOf('.'))
     """
-    cat <(head -n 1 ${mustache[0]})  <(tail -q -n +2  ${mustache}) > ${id}_${params.resolution}kb_loops.tsv
+    touch ${id}_${res}kb_loops.tsv 
+    mustache -p ${task.cpus} \
+	-f ${mcool} \
+	-r ${res} \
+	-o ${id}_${res}kb_loops.tsv
     """
 }
-//##
+

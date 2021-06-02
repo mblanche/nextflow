@@ -24,3 +24,5 @@ tests/test_data
 report*
 
 *.bam
+*.csv
+*.tsv

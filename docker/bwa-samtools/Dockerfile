@@ -17,11 +17,9 @@ RUN apt-get update -y \
     && make -j \
     && mv bwa /usr/local/bin \
     && rm -rf /bwa \
-    && apt --purge -y remove \
-    build-essential \
-    git \
-    && apt clean \
-    && apt purge \
+    && apt-get --purge -y remove \
+    && apt-get clean \
+    && apt-ger  purge \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
 

@@ -50,11 +50,6 @@ def helpMessage() {
 
     Process selector (default all processes):
         --downloadOnly               Only download BaseSpace biosample fastq files to local dir
-
-    Workflow:
-    -bg                              Will send the piepline in background mode (similar to nohup).
-        
-
     """.stripIndent()
 }
 
@@ -260,7 +255,7 @@ if (!params.downloadOnly){
 	
 	output:
 	tuple id, file("*.sam") into sam4chrSize, sam_ch1
-	
+
 	script:
 	"""
 	bwa mem -5SP -t ${task.cpus} \
@@ -284,7 +279,10 @@ if (!params.downloadOnly){
 	
 	output:
 	tuple id, path("*.bam"), path("*.bai") into bam_ch, bam_preseq_ch, bam_bigwig_ch
-	
+
+	when:
+	!params.downloadOnly
+
 	script:
 	"""
 	samtools sort -m 2G \
@@ -306,7 +304,7 @@ if (!params.downloadOnly){
 	
 	output:
 	path "*_cmplx_stat" into preseq_ch
-	
+
 	script:
 	"""
 	preseq lc_extrap -B -P -e 2.1e9 -s 1e8 -o ${id}_cmplx_stat ${bam} \
@@ -361,34 +359,33 @@ if (!params.downloadOnly){
 	
 	output:
 	path "*.csv" into adptStats_ch
-	
+
 	script:
 	gName = params.groupName ? "${params.groupName}_adpStats":"adptStats"
 	"""
 	adptStats $gName ${fastq} 
 	"""
     }
-
-}
-
-process bam2bw {
-    tag "_${id}"
-    cpus 20
-    memory '100 GB'
     
-    container 'mblanche/r-cov'
+    process bam2bw {
+	tag "_${id}"
+	cpus 20
+	memory '100 GB'
+	
+	container 'mblanche/r-cov'
     
-    publishDir "${params.outDir}/bigwigs",
-    	mode: 'copy'
-    
-    input:
-    tuple id, path(bam),path(idx) from bam_bigwig_ch
+	publishDir "${params.outDir}/bigwigs",
+    	    mode: 'copy'
+	
+	input:
+	tuple id, path(bam), path(idx) from bam_bigwig_ch
         
-    output:
-    tuple id, path ("*.bw") into bigwig_ch
-
-    script:
-    """
-    bam2bw ${bam} ${id}.bw ${task.cpus}
-    """
+	output:
+	tuple id, path ("*.bw") into bigwig_ch
+	
+	script:
+	"""
+	bam2bw ${bam} ${id}.bw ${task.cpus}
+	"""
+    }
 }
