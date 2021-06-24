@@ -48,8 +48,6 @@ def helpMessage() {
     References:
         --genome [str]               Name of the genome to use. Possible choice: hg38, mm10, dmel. Default: hg38.
 
-    Process selector (default all processes):
-        --downloadOnly               Only download BaseSpace biosample fastq files to local dir
     """.stripIndent()
 }
 
@@ -238,6 +236,7 @@ if (!params.biosample) {
     }
 }
 
+
 if (!params.downloadOnly){
     process bwa_mem {
 	tag "${id}"
@@ -246,11 +245,13 @@ if (!params.downloadOnly){
 	container 'mblanche/bwa-samtools'
 	
 	input:
+
 	tuple val(id), file(R1s), file(R2s) from bs_fqs_ch
 	    .mix(fqDir_fqs_ch)
 	    .mix(s3_fqs_ch)
 	    .map { id, file1, file2 -> tuple(file1.name.toString().split('_')[0], file1, file2) }
 	    .groupTuple()
+
 	path index from bwa_index.first()
 	
 	output:

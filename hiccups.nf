@@ -54,7 +54,6 @@ Channel
     .set{hiccups_ch}
 
 process hiccups {
-    echo true
     label 'gpu'
     accelerator 1
     cpus 6

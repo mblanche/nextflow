@@ -1,9 +1,7 @@
 #!/usr/bin/env nextflow
 
-params.expDir = false
-params.expName = false
-
-params.validPairDir = false
+params.validPairsDir = false
+params.outDir = false
 
 params.help = false
 
@@ -13,14 +11,20 @@ def helpMessage() {
 
     The typical command for running the pipeline is as follows:
 
-        runJuicer --validPairsDir path/to/Dir  --expDir prodEpi --expName myExpName
-    
+        runJuicer  --validPairsDir ~/path/to/.valid.pairs.gz
+
+         or
+        runJuicer  --validPairsDir ~/path/to/.valid.pairs.gz --outDir ~/path/to/where/to/save/files
+
     Mandatory arguments:
-        --expDir [nameOfDir]         Name of the base directory in ref_push where the data will be saved.
-        --expName [nameOfDir]        Name of the experiment directory where the data will be saved.
-        --validPairsDir [str]        Path to a directoy of fastq files.
+        --validPairsDir [path]      path to a direcoty with .valid.pairs.gz files (can be local or valid S3 location).
+    
+    Facultative arguments
+        --outDir [path]             Path to a diectory to save result files (can be local or valid S3 location).
 
-
+    runJuicer.ng will covert every file ending in .valid.pairs.gz in the specified directory to a .hic file. If no --outDir option is specified,
+    the files will be saved in the parent direcoty of --validPairsDir in a direcoty name hicFiles
+    
     """.stripIndent()
 }
 
@@ -29,8 +33,14 @@ if (params.help){
     exit 0
 }
 
-if ( !(params.expDir && params.expName && params.validPairsDir) ){
-    exit 1, "--expDir, --expName and --validPairsDir  are required arguments. Use --help to get the full usage." 
+if ( !(params.validPairsDir) ){
+    exit 1, "--validPairsDir is required arguments. Use --help to get the full usage." 
+}
+
+if(!params.outDir){
+    outDir = file(params.validPairsDir).getParent() + "/hicFiles"
+} else {
+    outDir = params.outDir
 }
 
 Channel
@@ -70,8 +80,8 @@ process juicer {
     memory '150 GB'
     container 'mblanche/juicer'
     
-    publishDir "${HOME}/ebs/ref_push/${params.expDir}/${params.expName}/hicFiles",
-    mode: 'copy'
+    publishDir "${outDir}",
+	mode: 'copy'
     
     input:
     tuple id, path(pairs), path(idx), path(chr_sizes)  from juicer_ch
