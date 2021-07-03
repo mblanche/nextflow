@@ -49,7 +49,7 @@ def helpMessage() {
         --ABresolutions [integers]   Comma-seperated list of resolutions in kb. Default: [32,64,128]
 
     Alignment:
-        --genome [str]               Name of the genome to use. Possible choice: hg38, mm10, dm3. Default: hg38.
+        --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3. Default: hg38.
         --mapQ [int]                 Quqlity score to filter reads. Integer between 0 and 60. Default: 40.
     
     Sub-Steps:
@@ -84,11 +84,11 @@ if (params.ABresolutions){
     ABresolutions = [32,64,128]
 }
 
-if (!params.genome =~ /hg38|mm10|dm3/){
+if (!params.genome =~ /hg19|hg38|mm10|dm3/){
     exit 1, "Only hg38, mm10 and dm3 genomes are currently offered"
 } else {
     Channel
-	.fromPath("${HOME}/ebs/genome/nextflow/${params.genome}", checkIfExists: true)
+	.fromFilePairs("${HOME}/ebs/genome/nextflow/${params.genome}/*.{amb,sa,pac,ann,bwt,fa}", size: -1, checkIfExists: true)
 	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
 	.set { bwa_index }
     Channel
@@ -302,7 +302,7 @@ process bwa_mem {
         .mix(fastqDir_ch)
 	.mix(genewiz_ch)
 
-    path index from bwa_index.first()
+    tuple index, path(index_files) from bwa_index.first() //This is an hack to make sure all files are in staged area
     
     output:
     tuple id, path("*.bam"), path("*.tsv") into  pairtools_parse_ch
@@ -310,9 +310,9 @@ process bwa_mem {
     script:
     """
     bwa mem -5SP -t ${task.cpus} \
-    	${index}/${params.genome} \
-    	<(zcat ${R1s}) \
-    	<(zcat ${R2s}) \
+    	${index} \
+    	<(zcat ${R1s}|head -n 40000) \
+    	<(zcat ${R2s}|head -n 40000) \
 	|samtools view -@ ${task.cpus} -Shb -o ${id}.bam - \
 	&& samtools view -H ${id}.bam | \
 	awk -v OFS='\t' '/^@SQ/ && !(\$2 ~ /:(chr|"")M/) {split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' | \
