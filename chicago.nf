@@ -7,6 +7,8 @@ params.help   = false
 
 params.resolutions = false
 
+params.genome = 'hg38'
+
 def helpMessage() {
     log.info"""
     Usage:
@@ -25,8 +27,9 @@ def helpMessage() {
     
     Facultative arguments
         --outDir [path]              Path to a diectory to save the bigwig coveage files. Can be local or valid S3 location.
+        --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3. Default: hg38.
 
-    Arrowhead parameters:
+    Chicago parameters:
         --resolutions [integers]     Comma-seperated list of resolutions for computing genomic bins. Default: [5,10,20]
 
     """.stripIndent()
@@ -47,6 +50,10 @@ if(!params.outDir){
     outDir = params.outDir
 }
 
+if (!params.genome =~ /hg19|hg38|mm10|dm3/){
+    exit 1, "Only hg38, mm10 and dm3 genomes are currently offered"
+}
+
 if (params.resolutions){
     resolutions = params.resolutions.split(/,/,-1)
 } else {
@@ -65,7 +72,7 @@ process cleanUpBam {
 	.fromPath("${params.bamDir}/*.bam")
     
     output:
-    tuple id, path("*-cleanedUp.bam") into cleanBam_ch, cleanBam2_ch
+    tuple id, path("*-cleanedUp.bam") into cleanBam_ch
 
     script:
     id = bam.name.toString().take(bam.name.toString().lastIndexOf('.'))
@@ -87,8 +94,8 @@ process make_mapFiles {
 	mode: 'copy'
     
     input:
-    tuple path(baits), val(id), path(bam), val(res) from Channel.fromPath(params.baits)
-	.combine(cleanBam_ch.first())
+    tuple path(baits), val(id), val(genome), val(res) from Channel.fromPath(params.baits)
+	.combine(Channel.from(params.genome).first)
 	.combine(Channel.from(resolutions).map{ it * 1000 })
     
     output:
@@ -96,7 +103,7 @@ process make_mapFiles {
     
     script:
     """
-    prep4Chicago ${baits} ${res} ${bam}
+    prep4Chicago ${baits} ${res} ${genome}
     """
 }
 
