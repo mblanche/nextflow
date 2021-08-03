@@ -4,12 +4,10 @@ params.bamDir = false
 params.baits  = false
 params.outDir = false
 params.help   = false
-params.libraryID = false
 
 params.resolutions = false
 
 params.genome = 'hg38'
-
 
 def helpMessage() {
     log.info"""
@@ -28,11 +26,8 @@ def helpMessage() {
         --baits [path]               Path to the bed files containing the baits. Can be local or valid S3 location.
     
     Facultative arguments
-        --outDir [path]              Path to a diectory to save the chicago result files. Can be local or valid S3 location. Default: Parent directory of the bam directory
+        --outDir [path]              Path to a diectory to save the bigwig coveage files. Can be local or valid S3 location.
         --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3. Default: hg38.
-
-    Restriting to a set of library:
-        --libraryID [str]            Comma seperated list of library prefixes. Need to be used in conjunction with --fast
 
     Chicago parameters:
         --resolutions [integers]     Comma-seperated list of resolutions for computing genomic bins. Default: [5,10,20]
@@ -65,22 +60,7 @@ if (params.resolutions){
     resolutions = [5,10,20]
 }
 
-if (params.libraryID){
-    Channel
-	.fromPath("${params.bamDir}/*.bam")
-	.map{ bam ->
-	    for ( item in params.libraryID.split(/,/, -1) ){
-		if ( bam.name =~/${item}/ ){
-		    return(bam)
-		}
-	    }
-	}
-	.set{bam_ch}
-} else {
-    Channel
-	.fromPath("${params.bamDir}/*.bam")
-	.set{bam_ch}
-}
+
 
 process cleanUpBam {
     label 'index'
@@ -90,7 +70,8 @@ process cleanUpBam {
     container 'mblanche/bwa-samtools'
 
     input:
-    path(bam) from bam_ch
+    path(bam) from Channel
+	.fromPath("${params.bamDir}/*.bam")
     
     output:
     tuple id, path("*-cleanedUp.bam") into cleanBam_ch
