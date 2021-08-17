@@ -6,7 +6,7 @@ params.outDir = false
 params.help   = false
 params.libraryID = false
 
-params.resolutions = false
+params.resolutions = "5,10,20"
 
 params.genome = 'hg38'
 
@@ -59,12 +59,6 @@ if (!params.genome =~ /hg19|hg38|mm10|dm3/){
     exit 1, "Only hg38, mm10 and dm3 genomes are currently offered"
 }
 
-if (params.resolutions){
-    resolutions = params.resolutions.split(/,/,-1)
-} else {
-    resolutions = [5,10,20]
-}
-
 if (params.libraryID){
     Channel
 	.fromPath("${params.bamDir}/*.bam")
@@ -81,6 +75,39 @@ if (params.libraryID){
 	.fromPath("${params.bamDir}/*.bam")
 	.set{bam_ch}
 }
+
+Channel
+    .from(params.resolutions)
+    .splitCsv(header: false)
+    .flatten()
+    .map{it.toInteger() * 1000}
+    .set{res_ch}
+
+process make_mapFiles {
+    echo true
+    tag "_${id}"
+    cpus 1
+    memory '8 GB'
+    container 'mblanche/chicago'
+
+    publishDir "${outDir}",
+	saveAs: {filename -> filename.endsWith('.rmap') ? filename : null},
+	mode: 'copy'
+    
+    input:
+    tuple path(baits), val(genome), val(res) from Channel.fromPath(params.baits)
+	.combine(Channel.from(params.genome).first())
+	.combine(res_ch)
+    
+    output:
+    tuple val(res), path("*.rmap"), path("*.baitmap") into mapFiles_ch
+    
+    script:
+    """
+    prep4Chicago ${baits} ${res} ${genome}
+    """
+}
+
 
 process cleanUpBam {
     label 'index'
@@ -101,30 +128,6 @@ process cleanUpBam {
     samtools index -@${task.cpus} ${bam} \
 	&& samtools view -@ ${task.cpus} -Shu -F 2048 ${bam} \
 	| samtools sort -n -@ ${task.cpus}  -o ${id}-cleanedUp.bam -
-    """
-}
-
-process make_mapFiles {
-    tag "_${id}"
-    cpus 1
-    memory '8 GB'
-    container 'mblanche/chicago'
-
-    publishDir "${outDir}",
-	saveAs: {filename -> filename.endsWith('.rmap') ? filename : null},
-	mode: 'copy'
-    
-    input:
-    tuple path(baits), val(genome), val(res) from Channel.fromPath(params.baits)
-	.combine(Channel.from(params.genome).first())
-	.combine(Channel.from(resolutions).map{ it * 1000 })
-    
-    output:
-    tuple val(res), path("*.rmap"), path("*.baitmap") into mapFiles_ch
-    
-    script:
-    """
-    prep4Chicago ${baits} ${res} ${genome}
     """
 }
 
@@ -156,7 +159,7 @@ process make_design {
 process run_Chicago {
     tag "_${id}"
     cpus 1
-    memory '16 GB'
+    memory '182 GB'
     container 'mblanche/chicago'
 
     publishDir "${outDir}/${id}_${res}",

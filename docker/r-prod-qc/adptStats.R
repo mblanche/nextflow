@@ -42,7 +42,7 @@ stats <- as.data.frame(do.call(rbind,mclapply(fqs,function(fl){
 
 libs <- factor(sub("_S.+","",basename(fqs)))
 dd <- data.frame(lib.id=levels(libs),
-                 nReadPairs=tapply(stats$length,libs,sum),
+                 nReads=tapply(stats$length,libs,sum),
                  fracWithHalfAdp=tapply(stats$half.adp.stat,libs,mean)*100,
                  fracWithLig=tapply(stats$mm1,libs,mean)*100,
                  startWithBridge=tapply(stats$mm2,libs,mean)*100)
