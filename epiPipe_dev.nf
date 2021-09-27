@@ -23,6 +23,8 @@ params.hichip = false
     
 params.copyFastq = false
 params.config = 'default'
+params.chicago-res = "5,10,20"
+params.baits = 'hs_pc_1'
 
 def helpMessage() {
     log.info"""
@@ -64,6 +66,11 @@ def helpMessage() {
     Sub-Steps:
         --capture                    Runs only steps required for HiC capture. Will not permoform AB, TAD and loop calls.
         --hichip                     Runs only steps required for HiChIP. Will not permoform AB, TAD and loop calls.
+
+    Chicago parameters:
+        --baits                      Capture panel used. Possible choise: pc-hs-1, pc-mm-1. Default: pc-hs-1.
+        --chicago-res [integers]     Comma-seperated list of resolutions for computing genomic bins. Default: [5,10,20]
+    
     """.stripIndent()
 }
 
@@ -537,7 +544,7 @@ process bam_sort {
     tuple id, path(bam) from merged_bam_sort_ch
     
     output:
-    tuple id, path("${id}.bam"),path("${id}.bam.bai") into bam_bigwig_ch
+    tuple id, path("${id}.bam"),path("${id}.bam.bai") into bam_bigwig_ch, bam_chicago_ch
 
     script:
     """
@@ -872,5 +879,132 @@ if (!(params.capture|params.hichip)){
 	    ${id}_${resKB}kb.ab
 	"""
 	
+    }
+}
+
+
+if (params.capture){
+
+    switch(params.baits) {
+	case "pc-hs-1":
+	    baits = ""
+	    break
+	    
+	case "pc-mm-1":
+	    baits = ""
+	    break
+
+	default:
+	    exit 1, "Wrong capure design. Has to be pc-hs-1 or pc-mm-1."
+	    break
+    } 
+	
+    Channel
+	.from(params.chicago-res)
+	.splitCsv(header: false)
+	.flatten()
+	.map{it.toInteger() * 1000}
+	.set{res_ch}
+
+    process make_mapFiles {
+	echo true
+	tag "_${id}"
+	cpus 1
+	memory '8 GB'
+	container 'mblanche/chicago'
+	
+	publishDir "${outDir}",
+	    saveAs: {filename -> filename.endsWith('.rmap') ? filename : null},
+	    mode: 'copy'
+	
+	input:
+	tuple path(baits), val(genome), val(res) from Channel.fromPath(baits)
+	    .combine(Channel.from(params.genome).first())
+	    .combine(res_ch)
+	
+	output:
+	tuple val(res), path("*.rmap"), path("*.baitmap") into mapFiles_ch
+	
+	script:
+	"""
+	prep4Chicago ${baits} ${res} ${genome}
+	"""
+    }
+    
+    
+    process cleanUpBam {
+	label 'index'
+	tag "_${id}"
+	cpus 48
+	memory '100 GB'
+	container 'mblanche/bwa-samtools'
+	
+	input:
+	path(bam) from bam_chicago_ch
+	
+	output:
+	tuple id, path("*-cleanedUp.bam") into cleanBam_ch
+	
+	script:
+	id = bam.name.toString().take(bam.name.toString().lastIndexOf('.'))
+	"""
+	samtools index -@${task.cpus} ${bam} \
+	    && samtools view -@ ${task.cpus} -Shu -F 2048 ${bam} \
+	    | samtools sort -n -@ ${task.cpus}  -o ${id}-cleanedUp.bam -
+	    """
+    }
+    
+    process make_design {
+	tag "_${id}"
+	cpus 1
+	memory '8 GB'
+	container 'mblanche/chicago'
+	
+	input:
+	tuple val(res), path(rmap), path(baitmap) from mapFiles_ch
+	
+	output:
+	tuple val(res), path(rmap), path(baitmap), path("${res}kDesingFiles*") into design_ch
+        
+	script:
+	"""
+	python3 /makeDesignFiles_py3.py \
+	    --minFragLen 75 \
+	    --maxFragLen 30000 \
+	    --maxLBrownEst 1000000 \
+	    --binsize 20000 \
+	    --rmapfile ${rmap} \
+	    --baitmapfile ${baitmap} \
+	    --outfilePrefix ${res}kDesingFiles
+	"""
+    }
+    
+    process run_Chicago {
+	tag "_${id}"
+	cpus 1
+	memory '182 GB'
+	container 'mblanche/chicago'
+	
+	publishDir "${outDir}/${id}_${res}",
+	    mode: 'copy'
+	
+	input:
+	tuple id, path(bam), val(res), path(rmap), path (baitmap), path(designFiles) from cleanBam_ch
+	    .combine(design_ch)
+	
+	output:
+	tuple id, path("${id}_${res}_chinput"), path("${id}_${res}bp") into chicago_ch
+	
+	script:
+	"""
+	bam2chicago.sh ${bam} ${baitmap} ${rmap} ${id}_${res}_chinput
+	
+	runChicago \
+	    --design-dir .  \
+	    --cutoff 5 \
+	    --export-format interBed,washU_text,seqMonk,washU_track \
+	    ${id}_${res}_chinput/${id}_${res}_chinput.chinput \
+	    ${id}_${res}bp
+	"""
     }
 }

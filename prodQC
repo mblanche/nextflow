@@ -12,6 +12,7 @@ params.s3Path = false
 params.S3libraryID = false
 
 params.genome = 'hg38'
+params.noPreSeq = false
 
 params.help = false
 
@@ -48,6 +49,9 @@ def helpMessage() {
    
     References:
         --genome [str]               Name of the genome to use. Possible choice: hg38, mm10, dmel. Default: hg38.
+
+    Others:
+        --noPreSeq [bool]            Do not run PreSeq. Default: false
 `
     """.stripIndent()
 }
@@ -197,7 +201,7 @@ if (!params.biosample) {
 	    .splitCsv(header: false)
 	
 	output:
-	tuple bs, file("*.fastq.gz") into fastqs_ch
+	tuple bs, path("*.fastq.gz") into bs_fqs_ch,bs_stat_ch
 	
 	script:
 	"""
@@ -213,7 +217,7 @@ process bwa_mem {
     container 'mblanche/bwa-samtools'
     
     input:
-    tuple val(id), file(R1s), file(R2s) from bs_fqs_ch
+    tuple val(id), path(R1s), path(R2s) from bs_fqs_ch
 	.map{bs,file ->
 	    pref = file.name.toString().take(file.name.toString().indexOf('_R'))
 	    return(tuple(pref,file))
@@ -229,7 +233,7 @@ process bwa_mem {
     path index from bwa_index.first()
     
     output:
-    tuple id, file("*.sam") into sam4chrSize, sam_ch1
+    tuple id, path("*.sam") into sam4chrSize, sam_ch1
     
     script:
     """
@@ -250,7 +254,7 @@ process bam_sort {
     publishDir "${params.outDir}/bam", mode: 'copy'
     
     input:
-    tuple id, file(bam) from sam_ch1
+    tuple id, path(bam) from sam_ch1
     
     output:
     tuple id, path("*.bam"), path("*.bai") into bam_ch, bam_preseq_ch, bam_bigwig_ch
@@ -268,23 +272,25 @@ process bam_sort {
     """
 }
 
-process preSeq {
-    tag "${id}"
-    cpus 1
-    memory '16 GB'
-    container 'mblanche/preseq'
-    
-    input:
-    tuple id, path(bam), path(idx)  from bam_preseq_ch
-    
-    output:
-    path "*_cmplx_stat" into preseq_ch
-
-    script:
-    """
-    preseq lc_extrap -B -P -e 2.1e9 -s 1e8 -o ${id}_cmplx_stat ${bam} \
-	|| touch ${id}_cmplx_stat
-    """
+if (!params.noPreSeq){
+    process preSeq {
+	tag "${id}"
+	cpus 1
+	memory '16 GB'
+	container 'mblanche/preseq'
+	
+	input:
+	tuple id, path(bam), path(idx)  from bam_preseq_ch
+	
+	output:
+	path "*_cmplx_stat" into preseq_ch
+	
+	script:
+	"""
+	preseq lc_extrap -B -P -e 2.1e9 -s 1e8 -o ${id}_cmplx_stat ${bam} \
+	    || touch ${id}_cmplx_stat
+	"""
+    }
 }
 
 process alnStats {

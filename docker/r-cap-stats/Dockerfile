@@ -14,7 +14,6 @@ RUN apt-get update -y \
     gnupg2 \
     wget
 
-
 RUN wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc \
     | tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc \
     && add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/" \
@@ -22,10 +21,22 @@ RUN wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc \
     && apt-get install -y r-base
 
 RUN apt-get clean \
-	&& apt-get purge \
-	&& rm -rf /var/lib/apt/lists/* /tmp/*
+    && apt-get purge \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
     -e 'install.packages("BiocManager")' \
     -e 'BiocManager::install()'
 
+RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
+    -e 'BiocManager::install("GenomicAlignments")'
+
+RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
+    -e 'BiocManager::install("rtracklayer")'
+
+RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
+    -e 'install.packages("ggplot2")'
+
+COPY capStats.R /usr/bin/capStats
+
+RUN chmod 755 /usr/bin/capStats

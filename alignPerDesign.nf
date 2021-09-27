@@ -25,7 +25,7 @@ def helpMessage() {
     Mandatory arguments:
         --outDir [path]              Path to a diectory to save the bigwig coveage files (can be local or valid S3 location.
 
-        --design [path]              Path to a design files in csv. First col: id, second col: replicate, third col: prefix of fastq
+        --design [path]              Path to a design files in csv. First col: id, second col: replicate, third col: path to R1, fourth col: path to R2
     
     Alignment:
         --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3. Default: hg38.
@@ -57,156 +57,50 @@ if (!params.genome =~ /hg19|hg38|mm10|dm3/){
 	.set { bwa_index }
 }
 
-
-if (params.design){
-    Channel
-    .fromPath(params.design)
-    .splitCsv(header: true)
-    .map {row ->
-	R1s=file("${row.fqDir}/${row.lib}_*R1*.fastq.gz")
-	out=[]
-	R1s.each { R1 ->
-	    def m = R1.name.toString() =~ /(.+)_R1/
-	    def prefix = m[0][1]
-	    def R2 = file("${row.fqDir}/${prefix}*_R2*.fastq.gz")
-	    if (R2.size() > 1) {
-		return( "R2 has more than one entry")
-	    } else {
-		    out.add(tuple(row.sample,row.rep,row.lib,R1,R2[0]))
-	    }
-	}
-	return(out)
-    }
-    .flatten()
-    .collate(5)
-    .set{fq_ch}
-
-} else {
-    Channel
-	.empty()
-	.set{fq_ch}
-}
-
-if (params.bsDesign){
-    process get_bs_files {
-	cpus 1
-	memory '1G'
-	container 'mblanche/basespace-cli'
-	
-	input:
-	tuple bs,val(sample),val(rep) from Channel
-	    .fromPath(params.bsDesign)
-	    .splitCsv(header: true)
-	    .map{tuple(it.bs, it.sample, it.rep)}
-	
-	output:
-	stdout into bs_id_ch
-	
-	script:
-	"""
-	bs biosample content -n ${bs} -F Id -F FilePath -f csv | \
-	    awk -v bs=${bs} -v sample=${sample}, -v rep=${rep} \
-	    'BEGIN{OFS =","} \
-	    NR == 1 {print "bs","sample","rep",\$0} \
-	    NR > 1  {print bs,sample,rep,\$0}'
-	"""
-    }
-    
-    process download_bs {
-	label "movers"
-	cpus 4
-	memory '4G'
-	container 'mblanche/basespace-cli'
-	queue 'moversQ'
-	
-	publishDir "${params.outDir}/fastqs",
-	    mode: 'copy'
-	
-	input:
-	tuple bs, val(oriFname), val(newFname), val(id) from bs_id_ch
-	    .splitCsv(header: true)
-	    .map { row -> tuple(row.FilePath,row.biosample, row.Id )}
-	    .groupTuple()
-	    .map{if (it[2].size() >1){
-		    x = []
-		    fname = it[0]
-		    id = fname.take(fname.indexOf('_'))
-		    suff = fname.substring(fname.indexOf('_')+1)
-		    bs = it[1][0]
-		    
-		    for (i in (1..it[2].size())) {
-			x.add([bs,fname,"${id}_FC${i}_${suff}",it[2][i-1]])
-		    }
-		    return(x)
-		} else {
-		    fname = it[0]
-		    bs = it[1][0]
-		    id = it[2]
-		    return([bs,fname,fname,id])
-		}
-	    }
-	    .flatten()
-	    .collate(4)
-	
-	output:
-	tuple bs, file("*.fastq.gz") into bs_ch
-	
-	script:
-	"""
-	bs file download -i ${id} -o . 
-
-	if [ "${oriFname}" != "${newFname}" ];then 
-	    mv ${oriFname} ${newFname}
-	fi
-	"""
-    }
-} else {
-    Channel
-	.empty()
-	.set{bs_ch}
-}
-
 process bwa_mem {
-    tag "_${id}"
+    tag "_${prefix}"
     cpus 12
     memory '24 GB'
     container 'mblanche/bwa-samtools'
     
     input:
-    tuple id, val(rep), val(lib), file(R1s), file(R2s) from fq_ch
-	.mix(bs_ch)
+    tuple id, val(rep), path(R1s), path(R2s) from Channel
+	.fromPath(params.design)
+	.splitCsv(header: false)
     
     tuple index, path(index_files) from bwa_index.first() //This is an hack to make sure all files are in staged area
     
     output:
-    tuple id, val(rep), val(lib), val(prefix), path("*.bam"), path("*.tsv") into  pairtools_parse_ch
+    tuple id, val(rep), val(prefix), path("*.bam"), path("*.tsv") into  pairtools_parse_ch
     
     script:
     prefix = R1s.name.toString().replaceFirst(/.fastq.+/,"")
+
     """
     bwa mem -5SP -t ${task.cpus} \
     	${index} \
-    	<(zcat ${R1s}|head -n 8000) \
-    	<(zcat ${R2s}|head -n 8000) \
+    	<(zcat ${R1s}) \
+    	<(zcat ${R2s}) \
 	|samtools view -@ ${task.cpus} -Shb -o ${prefix}.bam - \
 	&& samtools view -H ${prefix}.bam | \
 	awk -v OFS='\t' '/^@SQ/ && !(\$2 ~ /:(chr|"")M/) {split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' | \
 	sort -V -k1,1 \
 	> chr_size.tsv
+
     """
 }
 
 process pairtools_parse {
-    tag "_${id}"
+    tag "_${prefix}"
     cpus 14
     memory '50 GB'
     container 'mblanche/pairtools'
 
     input:
-    tuple id, val(rep), val(lib), val(prefix), path(sam), path(chr_sizes) from pairtools_parse_ch
+    tuple id, val(rep), val(prefix), path(sam), path(chr_sizes) from pairtools_parse_ch
 
     output:
-    tuple id, val(rep), val(lib), path("*.pairsam.gz") into pairsam_part_ch
+    tuple id, val(rep), val(prefix), path("*.pairsam.gz") into pairsam_part_ch
 
     script:
     """
@@ -222,58 +116,56 @@ process pairtools_parse {
 }
 
 process pairtools_merge_lane {
-    tag "_${id}"
+    tag "_${prefix_out}"
     cpus 14
     memory '50 GB'
     container 'mblanche/pairtools'
     
     input:
-    tuple id, val(rep), val(lib), path(sam) from pairsam_part_ch
+    tuple id, val(rep), val(prefix), path(sam) from pairsam_part_ch
 	.groupTuple(by: [1,0])
     
     output:
-    tuple id, val(rep), path("*.pairsam.gz") into pairsam_ch
+    tuple id, val(prefix_out), path("*.pairsam.gz") into pairsam_ch
 
     script:
+    prefix_out="${id}-${rep}"
     if (sam.sort().size() >1) {
 	"""
-	pairtools merge -o ${id}-${rep}.pairsam.gz --nproc ${task.cpus} ${sam}
+	pairtools merge -o ${prefix_out}.pairsam.gz --nproc ${task.cpus} ${sam}
 	"""
     } else {
 	"""
-	ln -sf ${sam} ${id}_ML.pairsam.gz
+	ln -sf ${sam} ${prefix_out}_ML.pairsam.gz
 	"""
     }
     
 }
 
 process pairtools_sort {
-    tag "_${id}"
+    tag "_${prefix}"
     cpus 14
     memory '100 GB'
     container 'mblanche/pairtools'
 
     input:
-    tuple id, val(rep), path(sam) from pairsam_ch
+    tuple id, val(prefix), path(sam) from pairsam_ch
 
     output:
-    tuple id, val(rep), path("*_sorted.pairsam.gz") into sorted_ps_ch
+    tuple id, val(prefix), path("*_sorted.pairsam.gz") into sorted_ps_ch
     
     script:
     """
     mkdir -p tmp 
     pairtools sort --tmpdir ./tmp  \
 	--nproc ${task.cpus} \
-	--output ${id}-${rep}_sorted.pairsam.gz \
+	--output ${prefix}_sorted.pairsam.gz \
 	$sam 
     """
 }
 
-sorted_ps_ch
-    .view()
-/*
 process pairtools_dedup {
-    tag "_${id}"
+    tag "_${prefix}"
     cpus 14
     memory '40 GB'
     container 'mblanche/pairtools'
@@ -283,48 +175,68 @@ process pairtools_dedup {
     	saveAs: {filename -> filename.endsWith('.stats') ? filename : null}
     
     input:
-    tuple id, val(rep), path(sam) from sorted_ps_ch
+    tuple id, val(prefix), path(sam) from sorted_ps_ch
 
     output:
-    tuple id, val(rep), path("*_dedup.pairsam.gz") into dedup_ps_ch
-    tuple id, val(rep), path("*_unmapped.pairsam.gz") into unmapped_ps_ch
-    tuple id, val(rep), path("*_pairtools.stats") into ps_stats_ch
+    tuple id, val(prefix), path("*_dedup.pairsam.gz") into dedup_ps_ch
+    tuple id, val(prefix), path("*_unmapped.pairsam.gz") into unmapped_ps_ch
+    path("*_pairtools.stats") into ps_stats_ch
 
     script:
     """
     pairtools dedup --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
 	--mark-dups \
-	--output-stats ${id}_pairtools.stats  \
-	--output ${id}_dedup.pairsam.gz \
-	--output-unmapped ${id}_unmapped.pairsam.gz \
+	--output-stats ${prefix}_pairtools.stats  \
+	--output ${prefix}_dedup.pairsam.gz \
+	--output-unmapped ${prefix}_unmapped.pairsam.gz \
 	${sam}
     """
 }
 
-process pairtools_split_dedup {
+
+process pairtools_stats_merge {
     tag "_${id}"
+    cpus 1
+    memory '4 GB'
+    container 'mblanche/pt-stats'
+
+    publishDir "${params.outDir}",
+	mode: 'copy'
+    
+    input:
+    path(stats) from ps_stats_ch
+	.collect()
+    
+    output:
+    path('pairtoolsStats.csv') into merged_stats_ch
+    
+    script:
+    """
+    pairtoolsStat.sh ${stats} > pairtoolsStats.csv
+    """
+}
+
+process pairtools_split_dedup {
+    tag "_${prefix}"
     cpus 14
     memory '40 GB'
     container 'mblanche/pairtools'
 
     input:
-    tuple id, val(rep), path(sam) from dedup_ps_ch
+    tuple id, val(prefix), path(sam) from dedup_ps_ch
     
     output:
-    tuple id, val(rep), path("*.bam") into bam_parts_ch
-    tuple id, val(rep), path("*.valid.pairs.gz") into pairs_parts_ch, pairs_parts_ch_test
+    tuple id, val(prefix), path("*.bam") into bam_parts_ch
+    tuple id, val(prefix), path("*.valid.pairs.gz") into pairs_parts_ch, pairs_parts_ch_test
 
     script:
     """
     pairtools split --nproc-in ${task.cpus} --nproc-out ${task.cpus} \
-	--output-sam ${id}-${rep}_PT.bam  \
-	--output-pairs ${id}-${rep}_PT.valid.pairs.gz  \
+	--output-sam ${prefix}_PT.bam  \
+	--output-pairs ${prefix}_PT.valid.pairs.gz  \
 	${sam}
     """
 }
-
-
-
 
 process merge_bam {
     tag "_${id}"
@@ -545,4 +457,3 @@ process juicer {
 	${chr_sizes}
     """
 }
-*/

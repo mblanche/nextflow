@@ -1,11 +1,38 @@
-FROM mblanche/r-base
+FROM ubuntu:20.04
 
 USER root
 
+ENV DEBIAN_FRONTEND noninteractive
+
+RUN apt-get update -y \
+    && apt-get install -y \
+    software-properties-common \
+    dirmngr \
+    build-essential \
+    libcurl4-openssl-dev \
+    libxml2-dev \
+    gnupg2 \
+    wget
+
+RUN wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc \
+    | tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc \
+    && add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/" \
+    && apt-get update -y \
+    && apt-get install -y r-base
+
+RUN apt-get clean \
+	&& apt-get purge \
+	&& rm -rf /var/lib/apt/lists/* /tmp/*
+
 RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
-	-e 'install.packages("BiocManager")' \
-	-e 'BiocManager::install(version = "3.12")' \
-	-e 'BiocManager::install(c("GenomicAlignments","rtracklayer"))'
+    -e 'install.packages("BiocManager")' \
+    -e 'BiocManager::install()'
+
+RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
+    -e 'BiocManager::install("GenomicAlignments")'
+
+RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
+    -e 'BiocManager::install("rtracklayer")'
 
 COPY bam2bw.R /usr/bin/bam2bw
 

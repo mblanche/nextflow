@@ -1,15 +1,13 @@
 #!/usr/bin/env nextflow
 
 params.bamDir = false
-params.baits  = false
 params.outDir = false
 params.help   = false
 params.libraryID = false
 
 params.resolutions = "5,10,20"
 
-params.genome = 'hg38'
-
+params.panel = 'hs_pc_1'
 
 def helpMessage() {
     log.info"""
@@ -17,22 +15,21 @@ def helpMessage() {
 
     The typical command for running the pipeline is as follows:
 
-        chicago.nf  --bamDir ~/path/to/bam/location --baits ~/path/to/baits.bed
-
-         or
-
-        chicago.nf  --bamDir ~/path/to/bam/location --outDir ~/path/to/where/to/save/files
+        chicago.nf  --bamDir ~/path/to/bam/location
+    
+    or
+    
+        chicago.nf  --bamDir ~/path/to/bam/location --panel mm_pc_1
 
     Mandatory arguments:
         --bamDir [path]              Name of the a direcoty with bam files and their index to compute coverages. Can be local or valid S3 location.
-        --baits [path]               Path to the bed files containing the baits. Can be local or valid S3 location.
     
     Facultative arguments
         --outDir [path]              Path to a diectory to save the chicago result files. Can be local or valid S3 location. Default: Parent directory of the bam directory
-        --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3. Default: hg38.
+        --panel [string]             Id of the panel to use. Valid id: hs_pc_1, hs_mm_1. Default: hs_pc_1.
 
     Restriting to a set of library:
-        --libraryID [str]            Comma seperated list of library prefixes. Need to be used in conjunction with --fast
+        --libraryID [str]            Comma seperated list of library prefixes. 
 
     Chicago parameters:
         --resolutions [integers]     Comma-seperated list of resolutions for computing genomic bins. Default: [5,10,20]
@@ -45,18 +42,33 @@ if (params.help){
     exit 0
 }
 
-if (!(params.bamDir && params.baits)) {
-    exit 1, "--bamDir and --baits are required arguments. Use --help to get the full usage." 
+if (!params.bamDir) {
+    exit 1, "--bamDir is a required argument. Use --help to get the full usage." 
 }
+
+switch(params.panel) {
+    case "hs_pc_1":
+	baits ="/mnt/ebs/genome/nextflow/${params.panel}/baits_v1.0.bed.bgz"
+	probes ="/mnt/ebs/genome/nextflow/${params.panel}/probes_v1.0.bed.bgz"
+	genome = "hg38"
+	break
+
+    case "mm_pc_1":
+	baits ="/mnt/ebs/genome/nextflow/${params.panel}/baits_mm10_v1.0.bed.bgz"
+	probes ="/mnt/ebs/genome/nextflow/${params.panel}/probes_mm10_v1.0.bed.bgz"
+	genome = "mm10"
+	break
+
+    default:
+	exit 1, "Wrong capure panel;. Has to be hs_pc_1 or mm_pc_1."
+	break
+} 
+
 
 if(!params.outDir){
     outDir = file(params.bamDir).getParent() + "/chicago"
 } else {
     outDir = params.outDir
-}
-
-if (!params.genome =~ /hg19|hg38|mm10|dm3/){
-    exit 1, "Only hg38, mm10 and dm3 genomes are currently offered"
 }
 
 if (params.libraryID){
@@ -83,33 +95,8 @@ Channel
     .map{it.toInteger() * 1000}
     .set{res_ch}
 
-process make_mapFiles {
-    echo true
-    tag "_${id}"
-    cpus 1
-    memory '8 GB'
-    container 'mblanche/chicago'
 
-    publishDir "${outDir}",
-	saveAs: {filename -> filename.endsWith('.rmap') ? filename : null},
-	mode: 'copy'
-    
-    input:
-    tuple path(baits), val(genome), val(res) from Channel.fromPath(params.baits)
-	.combine(Channel.from(params.genome).first())
-	.combine(res_ch)
-    
-    output:
-    tuple val(res), path("*.rmap"), path("*.baitmap") into mapFiles_ch
-    
-    script:
-    """
-    prep4Chicago ${baits} ${res} ${genome}
-    """
-}
-
-
-process cleanUpBam {
+process index_bam {
     label 'index'
     tag "_${id}"
     cpus 48
@@ -120,13 +107,85 @@ process cleanUpBam {
     path(bam) from bam_ch
     
     output:
-    tuple id, path("*-cleanedUp.bam") into cleanBam_ch
+    tuple id, path(bam), path("*.bai") into bam_capStats_ch, bam_cleanBam_ch, bam_mapFile_ch
 
     script:
     id = bam.name.toString().take(bam.name.toString().lastIndexOf('.'))
     """
-    samtools index -@${task.cpus} ${bam} \
-	&& samtools view -@ ${task.cpus} -Shu -F 2048 ${bam} \
+    samtools index -@${task.cpus} ${bam}
+    """
+}
+
+process capture_Stats {
+    label 'capStats'
+    tag "capStats"
+    cpus 25
+    memory '48 GB'
+    container 'mblanche/r-cap-stats'
+
+    publishDir "${outDir}/captureStats", mode: 'copy'
+	
+    input:
+    bam_capStats_ch
+	.multiMap { id, bam, idx ->
+	    bam: bam
+	    idx: idx
+	}
+	.set{ result }
+    
+    path(bams) from result.bam.collect()
+    path(idx) from result.idx.collect()
+    path(probeFile) from Channel.fromPath(probes)
+
+    output:
+    tuple path("*.pdf"), path("*.csv") into capStats_ch
+
+    script:
+    """
+    capStats ${probeFile} ${task.cpus} ${bams}
+    """
+}
+
+process make_mapFiles {
+    tag "_${id}"
+    cpus 1
+    memory '8 GB'
+    container 'mblanche/chicago'
+
+    publishDir "${outDir}",
+	saveAs: {filename -> filename.endsWith('.rmap') ? filename : null},
+	mode: 'copy'
+    
+    input:
+    tuple path(baitFile), val(id), path(bam), path(idx), val(res) from Channel.fromPath(baits)
+	.combine(bam_mapFile_ch.first())
+	.combine(res_ch)
+    
+    output:
+    tuple val(res), path("*.rmap"), path("*.baitmap") into mapFiles_ch
+    
+    script:
+    """
+    prep4Chicago ${baitFile} ${res} ${bam}
+    """
+}
+
+process cleanUpBam {
+    label 'cleanUp'
+    tag "_${id}"
+    cpus 48
+    memory '100 GB'
+    container 'mblanche/bwa-samtools'
+
+    input:
+    tuple id, path(bam), path(idx) from bam_cleanBam_ch
+    
+    output:
+    tuple id, path("*-cleanedUp.bam") into cleanBam_ch
+
+    script:
+    """
+    samtools view -@ ${task.cpus} -Shu -F 2048 ${bam} \
 	| samtools sort -n -@ ${task.cpus}  -o ${id}-cleanedUp.bam -
     """
 }

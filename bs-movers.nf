@@ -78,7 +78,6 @@ process get_bs_files {
 
 
 process download_bs {
-    echo true
     label "movers"
     cpus 4
     memory '4G'
