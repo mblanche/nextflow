@@ -26,7 +26,7 @@ def helpMessage() {
     
     Facultative arguments
         --outDir [path]              Path to a diectory to save the chicago result files. Can be local or valid S3 location. Default: Parent directory of the bam directory
-        --panel [string]             Id of the panel to use. Valid id: hs_pc_1, hs_mm_1. Default: hs_pc_1.
+        --panel [string]             Id of the panel to use. Valid id: hs_pc_1, mm_pc_1. Default: hs_pc_1.
 
     Restriting to a set of library:
         --libraryID [str]            Comma seperated list of library prefixes. 

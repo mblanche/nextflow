@@ -291,6 +291,10 @@ if (!params.noPreSeq){
 	    || touch ${id}_cmplx_stat
 	"""
     }
+} else {
+    Channel
+        .empty()
+        .set { preseq_ch }
 }
 
 process alnStats {
@@ -351,12 +355,12 @@ process adptStats {
 process bam2bw {
     tag "_${id}"
     cpus 20
-    memory '100 GB'
+    memory '200 GB'
     
     container 'mblanche/r-cov'
     
     publishDir "${params.outDir}/bigwigs",
-    	mode: 'copy'
+     	mode: 'copy'
     
     input:
     tuple id, path(bam), path(idx) from bam_bigwig_ch
