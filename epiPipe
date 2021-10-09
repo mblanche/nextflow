@@ -53,13 +53,13 @@ def helpMessage() {
     Basespce token and host:
         --config [config]            if using a basespce config file different from ~/.basename/default.cfg pass ~/.basespace/<config>.cfg
 
-    Arrowhead parameters:
-        --resolutions [integers]     Comma-seperated list of resolutions in kb for loops finding. Default: [5,10]
-        --ABresolutions [integers]   Comma-seperated list of resolutions in kb. Default: [32,64,128]
-
     Alignment:
         --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3. Default: hg38.
         --mapQ [int]                 Quqlity score to filter reads. Integer between 0 and 60. Default: 40.
+
+    Additional parameters:
+        --resolutions [integers]     Arrowhead and hiccup resolutions. Comma-seperated list of resolutions in kb for loops finding. Default: [5,10]
+        --ABresolutions [integers]   ABcomp resolutions. Comma-seperated list of resolutions in kb. Default: [32,64,128]
     
     Sub-Steps:
         --capture                    Runs only steps required for HiC capture. Will not permoform AB, TAD and loop calls.

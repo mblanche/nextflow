@@ -1,14 +1,18 @@
 #!/usr/bin/env nextflow
 
+params.help   = false
 
-params.fastqDir = false
 params.design = false
 params.outDir = false
-params.help   = false
+
 params.genome = 'hg38'
-params.libraryID = false
 params.mapQ = 40
-params.bsDesign = false
+
+params.resolutions = false
+params.ABresolutions = false
+
+params.capture = false
+params.hichip = false
 
 def helpMessage() {
     log.info"""
@@ -29,32 +33,57 @@ def helpMessage() {
     
     Alignment:
         --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3. Default: hg38.
+        --mapQ [int]                 Quqlity score to filter reads. Integer between 0 and 60. Default: 40.
+
+    Additional parameers:
+        --resolutions [integers]     Arrowhead and hiccup resolutions. Comma-seperated list of resolutions in kb for loops finding. Default: [5,10]
+        --ABresolutions [integers]   ABcomp resolutions. Comma-seperated list of resolutions in kb. Default: [32,64,128]
+
+    Sub-Steps:
+        --capture                    Runs only steps required for HiC capture. Will not permoform AB, TAD and loop calls.
+        --hichip                     Runs only steps required for HiChIP. Will not permoform AB, TAD and loop calls.
 
     """.stripIndent()
 }
+
 if (params.help){
     helpMessage()
     exit 0
 }
 
-if (!params.outDir || !(params.design ||params.bsDesign)) {
-        exit 1, "--outDir and --design is are required arguments. Use --help to get the full usage." 
+if (!(params.outDir && params.design)) {
+    exit 1, "--outDir and --design is are required arguments. Use --help to get the full usage." 
+} else {
+    outDir = params.outDir
 }
 
-if(!params.outDir){
-     outDir = file(params.fastqDir).getParent()
- } else {
-     outDir = params.outDir
+if (params.resolutions){
+    resolutions = params.resolutions.split(/,/,-1)
+} else {
+    resolutions = [5,10]
+}
+
+if (params.ABresolutions){
+    ABresolutions = params.ABresolutions.toString().split(/,/,-1)
+} else {
+    ABresolutions = [32,64,128]
 }
 
 
 if (!params.genome =~ /hg19|hg38|mm10|dm3/){
     exit 1, "Only hg38, mm10 and dm3 genomes are currently offered"
 } else {
+    
     Channel
 	.fromFilePairs("${HOME}/ebs/genome/nextflow/${params.genome}/*.{amb,sa,pac,ann,bwt,fa}", size: -1, checkIfExists: true)
 	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
 	.set { bwa_index }
+    
+    Channel
+	.fromPath("${HOME}/ebs/genome/nextflow/${params.genome}/${params.genome}.fa", checkIfExists: true)
+	.ifEmpty { exit 1, "Genome not found: ${params.genome}" }
+	.set { abcomp_genome_ch }
+    
 }
 
 process bwa_mem {
@@ -75,7 +104,6 @@ process bwa_mem {
     
     script:
     prefix = R1s.name.toString().replaceFirst(/.fastq.+/,"")
-
     """
     bwa mem -5SP -t ${task.cpus} \
     	${index} \
@@ -457,3 +485,130 @@ process juicer {
 	${chr_sizes}
     """
 }
+
+
+if (!(params.capture|params.hichip)){
+    process arrowhead {
+	tag "_${id}"
+	cpus 12
+	memory '40 GB'
+	container "mblanche/juicer"
+	
+	publishDir "${params.outDir}/arrowHead",
+	    mode: 'copy'
+	
+	input:
+	tuple id, path(hic), val(res) from arrowhead_ch
+	    .combine(Channel.from(resolutions))
+	
+	output:
+	tuple id, path("${id}_${res}kb") into arrowhead_out_ch
+	
+	script:
+	bpRes = res.toInteger() * 1000
+	"""
+	mkdir -p ${id}_${res}kb && touch ${id}_${res}kb/${bpRes}_blocks.bedpe
+	java -Xmx24000m \
+	    -jar /juicer_tools.jar \
+	    arrowhead \
+	    --threads ${task.cpus} \
+	    --ignore-sparsity \
+	    -r ${bpRes} \
+	    -k KR \
+	    ${hic} \
+	    ${id}_${res}kb
+	"""
+    }
+    
+    process hiccups {
+	tag "_${id}"
+	label 'gpu'
+	accelerator 1
+	cpus 6
+	memory '30 GB'
+	container "mblanche/hiccups-gpu"
+	
+	publishDir "${params.outDir}/hiccups/",
+	    mode: 'copy'
+	
+	input:
+	tuple id, path(hic), val(res)  from hiccups_ch
+            .combine(Channel.from(resolutions.collect{it*1000}.join(',')))
+	
+	output:
+	tuple id, path("${id}_loops") into hiccups_out_ch
+	
+	script:
+	"""
+	java -Xmx24000m \
+	    -jar /juicer_tools.jar \
+	    hiccups \
+	    --threads ${task.cpus} \
+	    --ignore-sparsity \
+	    -m 500 \
+	    -r ${res} \
+	    -k KR \
+	    ${hic} \
+	    ${id}_loops
+	"""
+    }
+    
+    process mustache {
+	tag "_${id}"
+	cpus 24
+	memory '48 GB'
+	container "mblanche/mustache"
+	
+	publishDir "${params.outDir}/mustache",
+	    mode: 'copy'
+	
+	input:
+	tuple id, path(mcool), val(res)  from mustache_mcool_ch
+	    .combine(Channel.from(1000,4000,16000))
+	
+	output:
+	tuple id, path("*.tsv") into mustache_2_merge_ch
+	
+	script:
+	"""
+	touch ${id}_${res}kb_loops.tsv 
+	mustache -p ${task.cpus} \
+	    -f ${mcool} \
+	    -r ${res} \
+	    -o ${id}_${res}kb_loops.tsv
+	"""
+    }
+    
+    process ABcomp {
+	tag "_${id}"
+	cpus 1
+	memory '12 GB'
+	container "mblanche/fan-c"
+	
+	publishDir "${params.outDir}/AB_comp",
+	    mode: 'copy'
+	
+	input:
+	tuple id, path(cool), val(resKB) from abcomp_mcool_ch
+    	    .combine(Channel.from(ABresolutions))
+	
+	path(genome) from abcomp_genome_ch.first()
+	
+	output:
+	tuple id, path("*.bed"), path("*.ab") into fanc_out_ch
+	
+	script:
+	res = resKB.toInteger() * 1000
+	"""
+	fanc compartments \
+	    -f \
+	    -v ${id}_eigenV_${resKB}kb.bed \
+	    -d ${id}_AB_${resKB}kb.bed \
+	    -g ${genome} \
+	    ${cool}@${res} \
+	    ${id}_${resKB}kb.ab
+	"""
+	
+    }
+}
+

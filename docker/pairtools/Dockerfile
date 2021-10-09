@@ -43,8 +43,6 @@ RUN apt-get update -y\
 	&& apt-get purge \
 	&& rm -rf /var/lib/apt/lists/* /tmp/*
 
-
-
-
-
-
+RUN git clone https://github.com/4dn-dcic/pairix \
+	&& mv /pairix/util/bam2pairs/bam2pairs /usr/bin/ \
+	&& rm -rf /pairix
