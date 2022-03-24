@@ -11,8 +11,11 @@ params.mapQ = 40
 params.resolutions = false
 params.ABresolutions = false
 
-params.capture = false
+params.chicago = false
 params.hichip = false
+
+params.panel = 'hs_pc_1'
+params.chicagoRes  = "5,10,20"
 
 def helpMessage() {
     log.info"""
@@ -40,8 +43,13 @@ def helpMessage() {
         --ABresolutions [integers]   ABcomp resolutions. Comma-seperated list of resolutions in kb. Default: [32,64,128]
 
     Sub-Steps:
-        --capture                    Runs only steps required for HiC capture. Will not permoform AB, TAD and loop calls.
+        --chicago                    Runs only steps required for HiC capture. Will not permoform AB, TAD and loop calls.
         --hichip                     Runs only steps required for HiChIP. Will not permoform AB, TAD and loop calls.
+
+    
+    Chicago parameters:
+        --resolutions [integers]     Comma-seperated list of resolutions for computing genomic bins. Default: [5,10,20]
+        --panel [string]             Id of the panel to use. Valid id: hs_pc_1, mm_pc_1. Default: hs_pc_1.
 
     """.stripIndent()
 }
@@ -75,7 +83,7 @@ if (!params.genome =~ /hg19|hg38|mm10|dm3/){
 } else {
     
     Channel
-	.fromFilePairs("${HOME}/ebs/genome/nextflow/${params.genome}/*.{amb,sa,pac,ann,bwt,fa}", size: -1, checkIfExists: true)
+	.fromFilePairs("${HOME}/ebs/genome/nextflow/bwa-mem2-index/${params.genome}/*.{0123,amb,ann,bwt.2bit.64,pac,fa}", size: -1, checkIfExists: true)
 	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
 	.set { bwa_index }
     
@@ -86,18 +94,30 @@ if (!params.genome =~ /hg19|hg38|mm10|dm3/){
     
 }
 
+// Creating fastq channel from design files
+Channel
+    .fromPath(params.design)
+    .splitCsv(header: false)
+    .view()
+    .set{ fqs_ch }
+
+
+// Creating Chicago reolution channel
+Channel
+    .from(params.chicagoRes.toString())
+    .splitCsv(header: false)
+    .flatten()
+    .map{it.toInteger() * 1000}
+    .set{res_ch}
+
 process bwa_mem {
     tag "_${prefix}"
-    cpus 12
-    memory '24 GB'
-    container 'mblanche/bwa-samtools'
+    label 'cpu'
+    container 'mblanche/bwa-mem2'
     
     input:
-    tuple id, val(rep), path(R1s), path(R2s) from Channel
-	.fromPath(params.design)
-	.splitCsv(header: false)
-    
-    tuple index, path(index_files) from bwa_index.first() //This is an hack to make sure all files are in staged area
+    tuple id, val(rep), path(R1s), path(R2s) from fqs_ch.first()
+    tuple index, path(index_files) from bwa_index.first() 
     
     output:
     tuple id, val(rep), val(prefix), path("*.bam"), path("*.tsv") into  pairtools_parse_ch
@@ -105,7 +125,7 @@ process bwa_mem {
     script:
     prefix = R1s.name.toString().replaceFirst(/.fastq.+/,"")
     """
-    bwa mem -5SP -t ${task.cpus} \
+    bwa-mem2 mem -5SP -t ${task.cpus} \
     	${index} \
     	<(zcat ${R1s}) \
     	<(zcat ${R2s}) \
@@ -114,9 +134,9 @@ process bwa_mem {
 	awk -v OFS='\t' '/^@SQ/ && !(\$2 ~ /:(chr|"")M/) {split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' | \
 	sort -V -k1,1 \
 	> chr_size.tsv
-
     """
 }
+
 
 process pairtools_parse {
     tag "_${prefix}"
@@ -154,7 +174,7 @@ process pairtools_merge_lane {
 	.groupTuple(by: [1,0])
     
     output:
-    tuple id, val(prefix_out), path("*.pairsam.gz") into pairsam_ch
+    tuple id, val(prefix_out), path("${prefix_out}*pairsam.gz") into pairsam_ch
 
     script:
     prefix_out="${id}-${rep}"
@@ -337,7 +357,10 @@ process bam_sort {
     tuple id, path(bam) from merged_bam_sort_ch
     
     output:
-    tuple id, path("${id}.bam"),path("${id}.bam.bai") into bam_bigwig_ch
+    tuple id, path("${id}.bam"),path("${id}.bam.bai") into bam_bigwig_ch,
+	bam_capStats_ch,
+	bam_cleanBam_ch,
+	bam_mapFile_ch
 
     script:
     """
@@ -487,7 +510,7 @@ process juicer {
 }
 
 
-if (!(params.capture|params.hichip)){
+if (!(params.chicago|params.hichip)){
     process arrowhead {
 	tag "_${id}"
 	cpus 12
@@ -612,3 +635,155 @@ if (!(params.capture|params.hichip)){
     }
 }
 
+if (params.chicago){
+    switch(params.panel) {
+	case "hs_pc_1":
+	    baits ="/mnt/ebs/genome/nextflow/${params.panel}/baits_v1.0.bed.bgz"
+	    probes ="/mnt/ebs/genome/nextflow/${params.panel}/probes_v1.0.bed.bgz"
+	    genome = "hg38"
+	    break
+	    
+    case "mm_pc_1":
+	    baits ="/mnt/ebs/genome/nextflow/${params.panel}/baits_mm10_v1.0.bed.bgz"
+	    probes ="/mnt/ebs/genome/nextflow/${params.panel}/probes_mm10_v1.0.bed.bgz"
+	    genome = "mm10"
+	    break
+	    
+	default:
+	    exit 1, "Wrong capure panel;. Has to be hs_pc_1 or mm_pc_1."
+	    break
+    } 
+
+    
+    process capture_Stats {
+	label 'capStats'
+	tag "capStats"
+	cpus 25
+	memory '48 GB'
+	container 'mblanche/r-cap-stats'
+	
+	publishDir "${outDir}/captureStats", mode: 'copy'
+	
+	input:
+	bam_capStats_ch
+	    .multiMap { id, bam, idx ->
+		bam: bam
+		idx: idx
+	    }
+	    .set{ result }
+	
+	path(bams) from result.bam.collect()
+	path(idx) from result.idx.collect()
+	path(probeFile) from Channel.fromPath(probes)
+	
+	output:
+	tuple path("*.pdf"), path("*.csv") into capStats_ch
+	
+	script:
+	"""
+	capStats ${probeFile} ${task.cpus} ${bams}
+	"""
+    }
+     
+    process make_mapFiles {
+	tag "_${id}"
+	cpus 1
+	memory '8 GB'
+	container 'mblanche/chicago:3.3'
+
+	publishDir "${outDir}",
+	    saveAs: {filename -> filename.endsWith('.rmap') ? filename : null},
+	    mode: 'copy'
+	
+	input:
+	tuple path(baitFile), val(id), path(bam), path(idx), val(res) from Channel.fromPath(baits)
+	    .combine(bam_mapFile_ch.first())
+	    .combine(res_ch)
+	
+	output:
+	tuple val(res), path("*.rmap"), path("*.baitmap") into mapFiles_ch
+	
+	script:
+	"""
+	prep4Chicago ${baitFile} ${res} ${bam}
+	"""
+    }
+
+    process cleanUpBam {
+	label 'cleanUp'
+	tag "_${id}"
+	cpus 48
+	memory '100 GB'
+	container 'mblanche/bwa-samtools'
+
+	input:
+	tuple id, path(bam), path(idx) from bam_cleanBam_ch
+	
+	output:
+	tuple id, path("*-cleanedUp.bam") into cleanBam_ch
+
+	script:
+	"""
+	samtools view -@ ${task.cpus} -Shu -F 2048 ${bam} \
+	    | samtools sort -n -@ ${task.cpus}  -o ${id}-cleanedUp.bam -
+	    """
+    }
+
+    process make_design {
+	tag "_${id}"
+	cpus 1
+	memory '8 GB'
+	container 'mblanche/chicago:3.3'
+	
+	input:
+	tuple val(res), path(rmap), path(baitmap) from mapFiles_ch
+
+	output:
+	tuple val(res), path(rmap), path(baitmap), path("${res}kDesingFiles*") into design_ch
+        
+	script:
+	"""
+	python3 /makeDesignFiles_py3.py \
+	    --minFragLen 75 \
+	    --maxFragLen 30000 \
+	    --maxLBrownEst 1000000 \
+	    --binsize 20000 \
+	    --rmapfile ${rmap} \
+	    --baitmapfile ${baitmap} \
+	    --outfilePrefix ${res}kDesingFiles
+	"""
+    }
+
+    process run_Chicago {
+	tag "_${id}"
+	cpus 1
+	memory '182 GB'
+	container 'mblanche/chicago:3.3'
+
+	errorStrategy { task.exitStatus in 1 ? 'ignore' : 'terminate' }
+
+	publishDir "${outDir}/${id}_${res}",
+	    mode: 'copy'
+	
+	input:
+	tuple id, path(bam), val(res), path(rmap), path (baitmap), path(designFiles) from cleanBam_ch
+	    .combine(design_ch)
+
+	output:
+	tuple id, path("${id}_${res}_chinput"), path("${id}_${res}bp") into chicago_ch
+
+	script:
+	"""
+	bam2chicago.sh ${bam} ${baitmap} ${rmap} ${id}_${res}_chinput
+	
+	runChicago \
+	    --design-dir . \
+	    --cutoff 5 \
+	    --export-format interBed,washU_text,seqMonk,washU_track \
+	    ${id}_${res}_chinput/${id}_${res}_chinput.chinput \
+	    ${id}_${res}bp
+	"""
+    }
+
+    
+}

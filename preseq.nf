@@ -1,7 +1,3 @@
-
-
-
-
 params.expDir = 'capture'
 params.expName = 'Twist-PG-plexing'
 

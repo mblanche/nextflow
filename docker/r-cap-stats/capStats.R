@@ -1,10 +1,6 @@
 #!/usr/bin/env Rscript
 args  <- commandArgs(trailingOnly=TRUE)
 
-##args <- c('probes_v1.0.bed.bgz', 48 ,'PC-bGurd-4.bam', 'PC-bGurd-1.bam', 'PC-bGurd-3.bam', 'PC-bGurd-2.bam')
-
-args <- c("probes_v1.0.bed.bgz", 25, "PC-Gurdon-WG-5.bam", "PC-Gurdon-WG-6.bam")
-
 if (length(args) < 3) {
     cat("Usage: capStats probes.bed ncores lib1.bam lib2.bam lib3.bam ...\n")
     quit(save="no")

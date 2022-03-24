@@ -1,4 +1,3 @@
-
 FROM ubuntu:20.04
 
 USER root
@@ -12,6 +11,9 @@ RUN apt-get update -y \
     samtools \
     git \
     zlib1g-dev \
+    seqtk \
+    python3 \
+    python3-pip \
     && git clone https://github.com/lh3/bwa.git \
     && cd /bwa \
     && make -j \
@@ -19,10 +21,18 @@ RUN apt-get update -y \
     && rm -rf /bwa \
     && apt-get --purge -y remove \
     && apt-get clean \
-    && apt-ger  purge \
+    && apt-get  purge \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
 
+RUN pip3 install \
+    numpy \
+    scipy \
+    py2bit \
+    pyBigWig \
+    pysam \
+    matplotlib \
+    Bio
 
 
 

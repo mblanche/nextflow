@@ -37,6 +37,9 @@ RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
 RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
 	-e 'BiocManager::install("ShortRead")'
 
+RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
+	-e 'BiocManager::install("ggplot2")'
+
 COPY alnStats.R /usr/bin/alnStats
 COPY adptStats.R /usr/bin/adptStats
 

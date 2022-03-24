@@ -42,7 +42,7 @@ def helpMessage() {
     Input (minimum one of these, can be mixed):
         --biosample [str]            Comma seperated list of BaseSpace biosamples.
         --fastqDir [str]             Path to a directoy of fastq files.
-        --genewizMap [str]           CSV file descrbibing the LIMS id to S3 path on GeneWiz bucket. Field: LIMS_ID,LIBRAY_ID,S3_path_R1,S3_path_R2
+        --genewizMap [str]           CSV file descrbibing the LIMS id to S3 path on GeneWiz bucket. Fields (no header): LIMS_ID,LIBRAY_ID,S3_path_R1,S3_path_R2
 
     Restriting to a set of library:
         --libraryID [str]            Comma seperated list of library prefixes. Need to be used in conjunction with --fastqDir.
@@ -54,7 +54,7 @@ def helpMessage() {
         --config [config]            if using a basespce config file different from ~/.basename/default.cfg pass ~/.basespace/<config>.cfg
 
     Alignment:
-        --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3. Default: hg38.
+        --genome [str]               Name of the genome to use. Possible choice: hg38, hg19, mm10, dm3, hg38_hla, susScr11, rn6, GRCg6a. Default: hg38.
         --mapQ [int]                 Quqlity score to filter reads. Integer between 0 and 60. Default: 40.
 
     Additional parameters:
@@ -93,11 +93,11 @@ if (params.ABresolutions){
     ABresolutions = [32,64,128]
 }
 
-if (!params.genome =~ /hg19|hg38|mm10|dm3/){
-    exit 1, "Only hg38, mm10 and dm3 genomes are currently offered"
+if (!params.genome =~ /hg19|hg38|mm10|dm3|hg38_hla|susScr11|rn6|GRCg6a/){
+    exit 1, "Only hg38, hg19, hg38_hla,  mm10, susScr11,  and dm3 genomes are currently offered"
 } else {
     Channel
-	.fromFilePairs("${HOME}/ebs/genome/nextflow/${params.genome}/*.{amb,sa,pac,ann,bwt,fa}", size: -1, checkIfExists: true)
+	.fromFilePairs("${HOME}/ebs/genome/nextflow/bwa-mem2-index/${params.genome}/*.{0123,amb,ann,bwt.2bit.64,pac,fa}", size: -1, checkIfExists: true)
 	.ifEmpty { exit 1, "BWA index not found: ${params.genome}" }
 	.set { bwa_index }
     Channel
@@ -303,9 +303,8 @@ if (params.biosample){
 
 process bwa_mem {
     tag "_${id}"
-    cpus 62
-    memory '96 GB'
-    container 'mblanche/bwa-samtools'
+    label 'cpu'
+    container 'mblanche/bwa-mem2'
     
     input:
     tuple id, path(R1s), path(R2s) from fastqs_ch
@@ -326,10 +325,10 @@ process bwa_mem {
     
     script:
     """
-    bwa mem -5SP -t ${task.cpus} \
+    bwa-mem2 mem -5SP -t ${task.cpus} \
     	${index} \
-    	<(zcat ${R1s}) \
-    	<(zcat ${R2s}) \
+    	${R1s} \
+    	${R2s} \
 	|samtools view -@ ${task.cpus} -Shb -o ${id}.bam - \
 	&& samtools view -H ${id}.bam | \
 	awk -v OFS='\t' '/^@SQ/ && !(\$2 ~ /:(chr|"")M/) {split(\$2,chr,":");split(\$3,ln,":");print chr[2],ln[2]}' | \

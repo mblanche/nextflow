@@ -48,11 +48,11 @@ def helpMessage() {
         --config [config]            if using a basespce config file different from ~/.basename/default.cfg pass ~/.basespace/<config>.cfg
    
     References:
-        --genome [str]               Name of the genome to use. Possible choice: hg38, mm10, dmel. Default: hg38.
+        --genome [str]               Name of the genome to use. Possible choice: hg38, mm10, dmel, rn6, GRCg6a, susScr11. Default: hg38.
 
     Others:
         --noPreSeq [bool]            Do not run PreSeq. Default: false
-`
+
     """.stripIndent()
 }
 
@@ -348,7 +348,7 @@ process adptStats {
     script:
     gName = params.groupName ? "${params.groupName}_adpStats":"adptStats"
     """
-    adptStats $gName ${fastq} 
+    adptStats ${task.cpus} ${fastq} 
     """
 }
 

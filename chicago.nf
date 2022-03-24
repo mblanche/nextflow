@@ -89,12 +89,11 @@ if (params.libraryID){
 }
 
 Channel
-    .from(params.resolutions)
+    .from(params.resolutions.toString())
     .splitCsv(header: false)
     .flatten()
     .map{it.toInteger() * 1000}
     .set{res_ch}
-
 
 process index_bam {
     label 'index'
@@ -236,7 +235,7 @@ process run_Chicago {
     bam2chicago.sh ${bam} ${baitmap} ${rmap} ${id}_${res}_chinput
     
     runChicago \
-	--design-dir .  \
+	--design-dir . \
 	--cutoff 5 \
 	--export-format interBed,washU_text,seqMonk,washU_track \
 	${id}_${res}_chinput/${id}_${res}_chinput.chinput \

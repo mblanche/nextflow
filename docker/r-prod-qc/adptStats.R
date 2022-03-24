@@ -3,7 +3,7 @@ library(ShortRead)
 
 args = commandArgs(trailingOnly=TRUE)
 
-expName <- args[1]
+nproc <- args[1]
 fqs <- args[-1]
 
 ## What fraction of reads have a ligated junction
@@ -38,7 +38,7 @@ stats <- as.data.frame(do.call(rbind,mclapply(fqs,function(fl){
     close(f)
     c(length=l,mm1=mean(mm1),mm2=mean(mm2),half.adp.stat=mean(half.adp.stat))
 
-},mc.preschedule=FALSE,mc.cores=system('nproc',intern=TRUE))))
+},mc.preschedule=FALSE,mc.cores=nproc)))
 
 libs <- factor(sub("_S.+","",basename(fqs)))
 dd <- data.frame(lib.id=levels(libs),
@@ -50,6 +50,6 @@ dd <- data.frame(lib.id=levels(libs),
 dd <- dd[order(dd$lib.id),]
 
 
-outFile <- paste0(expName,"_adptStats.csv")
+outFile <- "adptStats.csv"
 write.csv(dd,outFile)
 

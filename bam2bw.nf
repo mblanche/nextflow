@@ -1,6 +1,5 @@
 #!/usr/bin/env nextflow
 
-
 params.bamDir = false
 params.outDir = false
 params.help   = false
@@ -11,11 +10,11 @@ def helpMessage() {
 
     The typical command for running the pipeline is as follows:
 
-        bam2bw  --bamDir ~/path/to/bam/location
+        plotECDF  --bam ./path/to/lib1,./path/to/lib2,./path/to/lib3,... 
 
          or
 
-        bam2bw  --bamDir ~/path/to/bam/location --outDir ~/path/to/where/to/save/files
+        bam2bw  --prefix myECDF --bam ./path/to/lib1,./path/to/lib2,./path/to/lib3,... --outDir path/to/results.pdf
 
     Mandatory arguments:
         --bamDir [path]              Name of the a direcoty with bam files and their index to compute coverages (can be local or valid S3 location.
@@ -24,6 +23,11 @@ def helpMessage() {
         --outDir [path]              Path to a diectory to save the bigwig coveage files (can be local or valid S3 location.
 
     """.stripIndent()
+}
+
+if (params.help){
+    helpMessage()
+    exit 0
 }
 
 if (!params.bamDir) {
@@ -36,10 +40,6 @@ if(!params.outDir){
     outDir = params.outDir
 }
 
-if (params.help){
-    helpMessage()
-    exit 0
-}
 
 
 Channel
