@@ -1,0 +1,103 @@
+#!/usr/bin/env perl
+use warnings;
+use strict;
+
+MAIN: {
+  my (@first, @supp);
+  ##  my $file = "/home/ubuntu/ebs/ref_push/working/ultima_gen/fastqs/tmp.sam";
+  ## open(FH, "samtools view -h $file|");
+  
+  open R1, "|gzip >fastq_R1.fastq.gz";
+  open R2, "|gzip >fastq_R2.fastq.gz";
+    
+  while(<STDIN>){
+    chomp;
+    next if (/^@/);
+    
+    my @l = split "\t";
+    
+    $l[1] = [split('',sprintf ("%.12b", $l[1]))];
+    
+    if ( !@first || $first[0] ne $l[0] ){
+      ## time to print first, second and supp, if we have a read in supp
+      if (@supp) {
+	my $ori_id = $first[0];
+	
+	my $i;
+	for my $second_ref (@supp) {
+	  ++$i;
+	  my @second = @{$second_ref};
+	  
+	  my ($R1_seq,$R1_qal)  = $first[1]->[7] ? revcomp($first[9],$first[10]) : ($first[9],$first[10]);
+	  my ($R2_seq,$R2_qal)  = $second[1]->[7] ? revcomp($second[9],$second[10]) : ($second[9],$second[10]);
+
+	  ($R1_seq,$R1_qal) = processCG($R1_seq,$R1_qal,$first[5]);
+	  ($R2_seq,$R2_qal) = processCG($R2_seq,$R2_qal,$second[5]);
+	  
+	  print R1 (join("\n",('@'.$ori_id."-s$i 1",
+			       $R1_seq,
+			       "+",
+			       $R1_qal,
+			      ),"\n"));
+	  
+	  print R2 (join("\n",('@'.$ori_id."-s$i 2",
+			       $R2_seq,
+			       "+",
+			       $R2_qal,
+			      ),"\n"));
+	}
+	
+      }
+      ## Found new primary read, test for it first
+      die "First new read is not primary" if $l[1]->[0] || $l[1]->[3];
+      @first = @l;
+      undef @supp;
+    } else {
+      ## Make sure we have a supplementary read then push pointer in array
+      die "Supplementary read not flag as such" unless $l[1]->[0];
+      push @supp,\@l;
+      
+    }
+  }
+
+  close R1;
+  close R2
+    
+}
+
+sub revcomp {
+  my $seq = shift;
+  my $qual = shift;
+  
+  my $revcomp = reverse $seq;
+  my $revQual = reverse $qual;
+  
+  $revcomp =~ tr/ATGCatgc/TACGtacg/;
+
+  return  ($revcomp,$revQual);
+  
+}
+
+sub processCG {
+  my $seq = shift;
+  my $qual = shift;
+  my $cg = shift;
+
+  my ($start,$end) = (0,0);
+  my ($newSeq,$newQual) = ('','');
+  for my $block ($cg =~ /(\d+\D)/g){
+    my ($size,$type) = ($block =~ /(\d+)(\D)/);
+    if ($type eq 'M' || $type eq 'I') {
+      $end += $size;
+      $newSeq = $newSeq . substr($seq,$start,$end);
+      $newQual = $newQual . substr($qual,$start,$end);
+      $start = $end;
+    } elsif ($type eq "S") {
+      $start = ($end += $size);
+    }
+  }
+  return($newSeq,$newQual);
+}
+
+__END__
+  

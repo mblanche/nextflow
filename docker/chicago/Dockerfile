@@ -39,11 +39,12 @@ RUN wget https://github.com/arq5x/bedtools2/releases/download/v2.30.0/bedtools.s
     && mv bedtools.static.binary /usr/local/bin/bedtools \
     && chmod a+x /usr/local/bin/bedtools
 
-RUN wget https://raw.githubusercontent.com/dovetail-genomics/chicago/main/chicagoTools/bam2chicago.sh \
+RUN wget https://bitbucket.org/chicagoTeam/chicago/raw/e5a7d9247f7a18d62845b50cd82ec98b525c886e/chicagoTools/bam2chicago.sh \
+    && sed -i 's/print $4,$5,$6,$1,$2,$3,$7,$8,$10,$9,$11,$12,$13,$14,$15/print $4,$5,$6,$1,$2,$3,$7,$8,$10,$9,$11,$12,$13,$14/' bam2chicago.sh \
     && chmod 755 bam2chicago.sh \
     && mv bam2chicago.sh /usr/local/bin/
 
-RUN wget https://raw.githubusercontent.com/dovetail-genomics/chicago/main/chicagoTools/makeDesignFiles_py3.py
+RUN wget https://bitbucket.org/chicagoTeam/chicago/raw/e5a7d9247f7a18d62845b50cd82ec98b525c886e/chicagoTools/makeDesignFiles_py3.py 
 
 COPY prep4Chicago.R /usr/bin/prep4Chicago
 
@@ -52,6 +53,6 @@ RUN chmod 755 /usr/bin/prep4Chicago
 RUN /usr/bin/R -e 'options(Ncpus = parallel::detectCores())'\
     -e 'BiocManager::install(c("argparser","Chicago"))'
 
-RUN wget https://raw.githubusercontent.com/dovetail-genomics/chicago/main/chicagoTools/runChicago.R \
+RUN wget https://bitbucket.org/chicagoTeam/chicago/raw/e5a7d9247f7a18d62845b50cd82ec98b525c886e/chicagoTools/runChicago.R \
     && chmod 755 runChicago.R \
     && mv runChicago.R /usr/local/bin/runChicago
